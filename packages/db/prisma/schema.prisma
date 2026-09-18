@@ -1,0 +1,345 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum StoreStatus {
+  ACTIVE
+  SUSPENDED
+  SOFT_DELETED
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAID
+  AWAITING_MERCHANT_APPROVAL
+  FULFILLMENT_SUBMITTED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  FAILED
+}
+
+enum FulfillmentStatus {
+  PENDING
+  APPROVED
+  SUBMITTED
+  SHIPPED
+  FAILED
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  INCOMPLETE
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  name          String?
+  image         String?
+  passwordHash  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions      Session[]
+  accounts      Account[]
+  memberships   OrganizationMember[]
+}
+
+/// Better Auth session
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// Better Auth OAuth / credential account link
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+/// Merchant organization (tenant)
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members      OrganizationMember[]
+  stores       Store[]
+  subscription Subscription?
+}
+
+model OrganizationMember {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  role           String   @default("owner")
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+model Plan {
+  id                 String   @id // starter | growth | scale
+  name               String
+  priceUsd           Int
+  maxStores          Int
+  maxOrdersPerMonth  Int
+  squareCatalogId    String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id                   String             @id @default(cuid())
+  organizationId       String             @unique
+  planId               String
+  status               SubscriptionStatus @default(INCOMPLETE)
+  squareSubscriptionId String?
+  squareCustomerId     String?
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean            @default(false)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan         Plan         @relation(fields: [planId], references: [id])
+}
+
+model Store {
+  id           String      @id @default(cuid())
+  organizationId String
+  name         String
+  slug         String      @unique
+  theme        String      @default("default")
+  customDomain String?
+  status       StoreStatus @default(ACTIVE)
+  autoFulfill  Boolean     @default(false)
+  deletedAt    DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  storeProducts StoreProduct[]
+  orders        Order[]
+
+  @@index([organizationId])
+  @@index([status])
+}
+
+model Supplier {
+  id        String   @id @default(cuid())
+  code      String   @unique // cj | spocket | zendrop
+  name      String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products Product[]
+  mappings SupplierProductMapping[]
+  fulfillments Fulfillment[]
+}
+
+/// Platform catalog product (shared across merchants)
+model Product {
+  id            String   @id @default(cuid())
+  supplierId    String
+  externalId    String
+  title         String
+  description   String   @default("")
+  sku           String
+  priceCents    Int
+  costCents     Int
+  currency      String   @default("USD")
+  imageUrl      String?
+  category      String?
+  etaDaysMin    Int      @default(7)
+  etaDaysMax    Int      @default(21)
+  sourcingLabel String   @default("Ships from supplier warehouse")
+  stock         Int      @default(0)
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  supplier      Supplier                 @relation(fields: [supplierId], references: [id])
+  storeProducts StoreProduct[]
+  mappings      SupplierProductMapping[]
+
+  @@unique([supplierId, externalId])
+  @@index([sku])
+  @@index([category])
+}
+
+model SupplierProductMapping {
+  id               String   @id @default(cuid())
+  supplierId       String
+  productId        String
+  externalSku      String
+  externalVariantId String?
+  metadata         Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  supplier Supplier @relation(fields: [supplierId], references: [id])
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([supplierId, productId])
+}
+
+/// Merchant store listing (price override)
+model StoreProduct {
+  id          String    @id @default(cuid())
+  storeId     String
+  productId   String
+  title       String?
+  priceCents  Int
+  compareAtCents Int?
+  active      Boolean   @default(true)
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+  lines   OrderLine[]
+
+  @@unique([storeId, productId])
+  @@index([storeId])
+}
+
+model Order {
+  id                 String      @id @default(cuid())
+  storeId            String
+  status             OrderStatus @default(PENDING_PAYMENT)
+  customerEmail      String
+  customerName       String
+  shippingLine1      String
+  shippingLine2      String?
+  shippingCity       String
+  shippingState      String
+  shippingPostalCode String
+  shippingCountry    String      @default("US")
+  currency           String      @default("USD")
+  subtotalCents      Int
+  shippingCents      Int         @default(0)
+  totalCents         Int
+  platformFeeCents   Int         @default(0)
+  squarePaymentId    String?
+  squareOrderId      String?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  store         Store          @relation(fields: [storeId], references: [id])
+  lines         OrderLine[]
+  fulfillment   Fulfillment?
+  trackingEvents TrackingEvent[]
+
+  @@index([storeId])
+  @@index([status])
+  @@index([customerEmail])
+}
+
+model OrderLine {
+  id             String @id @default(cuid())
+  orderId        String
+  storeProductId String
+  title          String
+  sku            String
+  quantity       Int
+  unitPriceCents Int
+  unitCostCents  Int
+
+  order        Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  storeProduct StoreProduct @relation(fields: [storeProductId], references: [id])
+
+  @@index([orderId])
+}
+
+model Fulfillment {
+  id               String            @id @default(cuid())
+  orderId          String            @unique
+  supplierId       String
+  status           FulfillmentStatus @default(PENDING)
+  externalId       String?
+  trackingNumber   String?
+  carrier          String?
+  submittedAt      DateTime?
+  shippedAt        DateTime?
+  errorMessage     String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  order    Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  supplier Supplier @relation(fields: [supplierId], references: [id])
+}
+
+model TrackingEvent {
+  id          String   @id @default(cuid())
+  orderId     String
+  status      String
+  description String
+  occurredAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
+
+/// Optional prepaid wholesale balance (stub for Phase 0)
+model DepositBalance {
+  id        String   @id @default(cuid())
+  organizationId String   @unique
+  balanceCents Int   @default(0)
+  currency  String   @default("USD")
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}

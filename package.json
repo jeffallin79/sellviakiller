@@ -1,0 +1,20 @@
+{
+  "name": "storeforge",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "db:generate": "pnpm --filter @storeforge/db generate",
+    "db:migrate": "pnpm --filter @storeforge/db migrate:dev",
+    "db:push": "pnpm --filter @storeforge/db push",
+    "db:seed": "pnpm --filter @storeforge/db seed",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2"
+  }
+}
