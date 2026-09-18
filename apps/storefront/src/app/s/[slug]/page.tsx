@@ -27,6 +27,7 @@ export default function StorePage() {
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
+  const [stubMode, setStubMode] = useState(false);
 
   useEffect(() => {
     api(`/stores/by-slug/${slug}`).then(setStore).catch((e) => setError(e.message));
@@ -67,6 +68,12 @@ export default function StorePage() {
         }),
       });
       setMsg(res.message ?? 'Order placed');
+      setStubMode(res.mode === 'stub');
+      if (res.mode === 'stub' && res.checkoutUrl) {
+        // Prefer thank-you URL from stub payment link (includes stub_paid=1)
+        window.location.href = res.checkoutUrl;
+        return;
+      }
       if (res.checkoutUrl && process.env.NEXT_PUBLIC_SQUARE_LIVE === '1') {
         window.location.href = res.checkoutUrl;
       } else {
@@ -151,6 +158,11 @@ export default function StorePage() {
         </div>
       )}
 
+      {stubMode && (
+        <p className="stub-badge" role="status" style={{ marginTop: 16 }}>
+          STUB / SANDBOX PAYMENT — no Square charge was made
+        </p>
+      )}
       {msg && <p className="muted" style={{ marginTop: 16 }}>{msg}</p>}
     </div>
   );

@@ -1,11 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { API_URL } from '@/lib/api';
 
-export default function LoginPage() {
-  const [email, setEmail] = useState('merchant@storeforge.local');
-  const [password, setPassword] = useState('password123');
+function LoginForm() {
+  const searchParams = useSearchParams();
+  const prefillEmail = searchParams.get('email') ?? '';
+  const [email, setEmail] = useState(prefillEmail);
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -35,9 +38,21 @@ export default function LoginPage() {
       <p className="muted">Better Auth email/password</p>
       <form onSubmit={onSubmit}>
         <label>Email</label>
-        <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required />
+        <input
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          type="email"
+          required
+          autoComplete="email"
+        />
         <label>Password</label>
-        <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" required />
+        <input
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          type="password"
+          required
+          autoComplete="current-password"
+        />
         {error && <p className="error">{error}</p>}
         <button className="btn" disabled={loading} type="submit">
           {loading ? 'Signing in…' : 'Sign in'}
@@ -47,5 +62,13 @@ export default function LoginPage() {
         No account? <a href="/signup">Sign up</a>
       </p>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="card" style={{ maxWidth: 420 }}><h1>Sign in</h1></div>}>
+      <LoginForm />
+    </Suspense>
   );
 }

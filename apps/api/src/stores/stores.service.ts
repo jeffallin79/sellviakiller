@@ -52,7 +52,10 @@ export class StoresService {
       );
     }
 
-    const existing = await prisma.store.findUnique({ where: { slug: input.slug } });
+    // Soft-deleted stores must not block slug reuse
+    const existing = await prisma.store.findFirst({
+      where: { slug: input.slug, deletedAt: null },
+    });
     if (existing) throw new BadRequestException('Slug already taken');
 
     const store = await prisma.store.create({
@@ -90,11 +93,15 @@ export class StoresService {
   async softDelete(organizationId: string, storeId: string) {
     const store = await prisma.store.findFirst({ where: { id: storeId, organizationId } });
     if (!store) throw new NotFoundException('Store not found');
+    if (store.deletedAt) return store;
+    // Free the global unique slug so a new store can reuse it (partial-unique semantics).
+    const freedSlug = `${store.slug}__deleted__${store.id}`;
     return prisma.store.update({
       where: { id: storeId },
       data: {
         status: StoreStatus.SOFT_DELETED,
         deletedAt: new Date(),
+        slug: freedSlug,
       },
     });
   }

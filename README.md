@@ -97,7 +97,10 @@ Research scores, abandoned cart, custom domains, ads, academy, digital products,
 pnpm docker:up | docker:down
 pnpm db:generate | db:push | db:seed
 pnpm dev | build
+./scripts/demo-flow.sh   # API smoke only (bootstrap + health) — not full E2E
 ```
+
+`ALLOW_STUB_PAY=true` enables authenticated `POST /api/orders/:id/stub-pay` for local demos. Leave unset/false in production (endpoint returns 404).
 
 ## License
 

@@ -51,8 +51,10 @@ export class AuthService {
       },
     });
     // Shape compatible with admin UI expecting memberships[].account
+    // Never expose password hashes or Better Auth credential secrets.
+    const { passwordHash: _pw, ...safeUser } = user;
     return {
-      ...user,
+      ...safeUser,
       memberships: user.memberships.map((m) => ({
         ...m,
         account: m.organization,

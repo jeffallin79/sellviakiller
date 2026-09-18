@@ -1,4 +1,13 @@
-import { Controller, Get, Post, Body, Param, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  UseGuards,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { CheckoutSchema } from '@storeforge/shared';
 import { OrdersService } from './orders.service';
@@ -27,16 +36,31 @@ export class OrdersController {
     return this.orders.listForAccount(accountId);
   }
 
+  /** Merchant-only: order must belong to the caller's organization. */
   @Get('orders/:id')
-  async get(@Param('id') id: string) {
-    return this.orders.get(id);
+  @UseGuards(AuthGuard)
+  async get(@CurrentUser() user: { id: string }, @Param('id') id: string) {
+    const accountId = await this.authService.requireAccountId(user.id);
+    return this.orders.getForAccount(accountId, id);
   }
 
+  /**
+   * Local/demo only. Requires ALLOW_STUB_PAY=true and merchant auth.
+   * Without the flag (including production), returns 404.
+   * Checkout stub (no Square) still marks new orders PAID without this endpoint.
+   */
   @Post('orders/:id/stub-pay')
-  async stubPay(@Param('id') id: string) {
-    if (process.env.SQUARE_ACCESS_TOKEN) {
-      return { error: 'Stub pay disabled when Square is configured' };
+  @UseGuards(AuthGuard)
+  async stubPay(@CurrentUser() user: { id: string }, @Param('id') id: string) {
+    // Production (and any env) without the explicit flag → 404
+    if (process.env.ALLOW_STUB_PAY !== 'true') {
+      throw new NotFoundException();
     }
+    if (process.env.SQUARE_ACCESS_TOKEN) {
+      throw new ForbiddenException('Stub pay disabled when Square is configured');
+    }
+    const accountId = await this.authService.requireAccountId(user.id);
+    await this.orders.getForAccount(accountId, id);
     return this.orders.markPaid(id, `stub_manual_${Date.now()}`);
   }
 }

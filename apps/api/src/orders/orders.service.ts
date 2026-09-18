@@ -102,6 +102,13 @@ export class OrdersService {
   }
 
   async markPaid(orderId: string, squarePaymentId: string) {
+    const existing = await prisma.order.findUnique({ where: { id: orderId } });
+    if (!existing) throw new NotFoundException('Order not found');
+    // Do not regress SHIPPED/DELIVERED/etc. back to PAID (idempotent for already-paid).
+    if (existing.status !== OrderStatus.PENDING_PAYMENT) {
+      return existing;
+    }
+
     const order = await prisma.order.update({
       where: { id: orderId },
       data: {
@@ -145,6 +152,21 @@ export class OrdersService {
   async get(orderId: string) {
     const order = await prisma.order.findUnique({
       where: { id: orderId },
+      include: {
+        lines: true,
+        fulfillment: true,
+        trackingEvents: { orderBy: { occurredAt: 'asc' } },
+        store: true,
+      },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    return order;
+  }
+
+  /** Merchant-scoped order fetch — never returns another org's order (or PII). */
+  async getForAccount(organizationId: string, orderId: string) {
+    const order = await prisma.order.findFirst({
+      where: { id: orderId, store: { organizationId } },
       include: {
         lines: true,
         fulfillment: true,
