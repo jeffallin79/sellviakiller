@@ -99,6 +99,9 @@ export class RefundsService {
         }
         await this.emails.orderEvent('ORDER_REFUNDED', refund.orderId, { refundId: refund.id, refundAmountCents: refund.amountCents });
       }
+    } else if (p.status === 'pending' || p.status === 'requires_action') {
+      // Found on Stripe after an unknown outcome: it exists, it just hasn't settled.
+      await prisma.orderRefund.updateMany({ where: { id: refund.id, status: 'unknown' }, data: { status: 'pending' } });
     } else if (p.status === 'failed' || p.status === 'canceled') {
       await this.release(refund.id, p.status);
     }
