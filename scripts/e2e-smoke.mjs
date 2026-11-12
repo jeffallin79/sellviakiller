@@ -75,6 +75,17 @@ ok(kinds.includes('ORDER_CONFIRMED') && kinds.includes('ORDER_SHIPPED'), `order 
 const shippedMail = mails.items.find((m) => m.kind === 'ORDER_SHIPPED');
 const shippedHtml = (await call('GET', `/emails/${shippedMail.id}/html`)).json;
 ok(String(shippedHtml).includes(after.fulfillment.trackingNumber), 'shipped email carries the tracking number');
+// QA round 2 #1: confirmation goes out via the outbox (not awaited by markPaid) — wait for SENT
+{
+  const t0 = Date.now();
+  let conf;
+  while (Date.now() - t0 < 15_000) {
+    conf = (await call('GET', `/emails?orderId=${order.id}`)).json.items.find((m) => m.kind === 'ORDER_CONFIRMED');
+    if (conf?.status === 'SENT') break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  ok(conf?.status === 'SENT' && after.fulfillment, `fulfilment routed + confirmation delivered via outbox (${conf?.status})`);
+}
 const rf = await call('POST', `/orders/${order.id}/refunds`, { amountCents: 100, requestId: `smoke-refund-${Date.now()}` });
 ok(rf.status < 300 && rf.json.status === 'succeeded', 'partial refund $1 (stub)');
 ok((await call('GET', `/emails?orderId=${order.id}`)).json.items.some((m) => m.kind === 'ORDER_REFUNDED'), 'refund email');
@@ -110,5 +121,24 @@ const ref = await call('POST', '/fuel/refunds', { topupTxnId: w.json.txns[0].id,
 ok(ref.status < 300 && ref.json.status === 'succeeded', 'ad fuel refund $5 (stub)');
 const csv = await call('GET', '/export/orders.csv');
 ok(csv.status === 200 && String(csv.json).includes(order.id), 'orders CSV export');
+// ---- QA round 2 #3: storefront ignores X-Forwarded-Host from an untrusted peer ----
+// (node:http, because fetch() won't send a custom Host header)
+{
+  const { request } = await import('node:http');
+  const u = new URL(process.env.STOREFRONT_ORIGIN ?? 'http://127.0.0.1:3000');
+  const get = (headers) => new Promise((res) => {
+    const rq = request({ host: u.hostname, port: u.port || 80, path: '/', method: 'GET', headers }, (r) => { r.resume(); res(r.statusCode); });
+    rq.on('error', () => res(null));
+    rq.end();
+  });
+  const spoof = await get({ Host: 'unknown-shop.example.org', 'X-Forwarded-Host': `${slug}.storeforge.local`, 'x-sf-peer': '127.0.0.1;forged' });
+  if (spoof === null) console.log('skip - storefront not running');
+  else {
+    ok(spoof === 404, `spoofed X-Forwarded-Host ignored (routed by Host → ${spoof})`);
+    const real = await get({ Host: `${slug}.storeforge.local` });
+    ok(real !== 404 && real !== null, `same shop via its Host header → ${real}`);
+  }
+}
+
 ok((await call('DELETE', `/stores/${storeId}`)).status < 300, 'soft-delete store');
 console.log(`\nE2E smoke passed (${email}, store ${slug})`);
