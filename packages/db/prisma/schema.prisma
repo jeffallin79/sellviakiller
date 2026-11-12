@@ -20,7 +20,29 @@ enum OrderStatus {
   FULFILLMENT_SUBMITTED
   SHIPPED
   DELIVERED
+  REFUNDED
   CANCELLED
+  FAILED
+}
+
+/// Custom domain lifecycle (Phase 1 slice 2)
+enum DomainStatus {
+  PENDING_DNS // waiting for the merchant's TXT + CNAME/A records
+  ISSUING_TLS // DNS verified; certificate being issued
+  ACTIVE // verified + TLS ready; storefront served on this host
+  FAILED // gave up (no DNS after DOMAIN_DNS_TIMEOUT_HOURS, or TLS error)
+}
+
+enum EmailKind {
+  ORDER_CONFIRMED
+  ORDER_SHIPPED
+  ORDER_DELIVERED
+  ORDER_REFUNDED
+}
+
+enum EmailStatus {
+  QUEUED
+  SENT
   FAILED
 }
 
@@ -186,6 +208,8 @@ model Store {
   organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   storeProducts StoreProduct[]
   orders        Order[]
+  domains       Domain[]
+  emails        EmailMessage[]
 
   @@index([organizationId])
   @@index([status])
@@ -299,6 +323,8 @@ model Order {
   flag               String?
   flagDetail         String?
   flaggedAt          DateTime?
+  /// Sum of succeeded + in-flight refunds (reserved before the provider call)
+  refundedCents      Int         @default(0)
   createdAt          DateTime    @default(now())
   updatedAt          DateTime    @updatedAt
 
@@ -306,6 +332,8 @@ model Order {
   lines          OrderLine[]
   fulfillment    Fulfillment?
   trackingEvents TrackingEvent[]
+  refunds        OrderRefund[]
+  emails         EmailMessage[]
 
   @@index([storeId])
   @@index([status])
@@ -478,4 +506,89 @@ model Notification {
   createdAt      DateTime  @default(now())
 
   @@index([organizationId, createdAt])
+}
+
+/// A merchant's own hostname for a store (blueprint §4: Domain(storeId, host, status, verifiedAt)).
+model Domain {
+  id                String       @id @default(cuid())
+  storeId           String
+  /// Lower-case, no port, no trailing dot. Globally unique.
+  host              String       @unique
+  status            DomainStatus @default(PENDING_DNS)
+  /// Value expected in TXT _storeforge.<host> = "storeforge-verify=<token>"
+  verificationToken String
+  /// Primary domain is used for links in emails and checkout return URLs
+  isPrimary         Boolean      @default(false)
+  /// DNS ownership + routing verified
+  verifiedAt        DateTime?
+  tlsRequestedAt    DateTime?
+  tlsIssuedAt       DateTime?
+  tlsProvider       String       @default("stub") // stub | caddy | vercel
+  /// Start of the current DNS wait window ("Check again" on a FAILED domain restarts it)
+  windowStartedAt   DateTime     @default(now())
+  lastCheckedAt     DateTime?
+  nextCheckAt       DateTime     @default(now())
+  checkCount        Int          @default(0)
+  /// Last check result per record, for the admin screen: { txt, routing, tls }
+  lastResult        Json?
+  lastError         String?
+  /// Dev/stub DNS only: merchant pressed "Simulate DNS" (never consulted in live DNS mode)
+  devDnsSimulatedAt DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId])
+  @@index([status, nextCheckAt])
+}
+
+/// Storefront order refund (Stripe Refund on the destination charge, reverse_transfer).
+model OrderRefund {
+  id               String   @id @default(cuid())
+  orderId          String
+  amountCents      Int
+  reason           String?
+  /// Merchant-supplied request id; makes the POST idempotent
+  requestId        String
+  provider         String   @default("stub")
+  providerRefundId String?  @unique
+  status           String   @default("pending") // pending | succeeded | failed | canceled
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, requestId])
+  @@index([orderId])
+}
+
+/// Every customer email. dedupeKey makes each trigger fire once (webhook replays, tracking re-polls).
+model EmailMessage {
+  id                String      @id @default(cuid())
+  storeId           String?
+  orderId           String?
+  kind              EmailKind
+  dedupeKey         String      @unique
+  to                String
+  from              String
+  replyTo           String?
+  subject           String
+  html              String
+  text              String
+  status            EmailStatus @default(QUEUED)
+  /// resend | outbox (dev: written to EMAIL_OUTBOX_DIR, nothing leaves the box)
+  transport         String?
+  providerMessageId String?
+  attempts          Int         @default(0)
+  lastError         String?
+  sentAt            DateTime?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  store Store? @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  order Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([storeId, createdAt])
+  @@index([orderId])
 }

@@ -21,9 +21,12 @@ export function getRedis() {
 
 export const QUEUE_ROUTE_FULFILLMENT = 'route-fulfillment';
 export const QUEUE_TRACKING_POLL = 'tracking-poll';
+/** Blueprint §4: queue `email.send` */
+export const QUEUE_EMAIL_SEND = 'email.send';
 
 let routeQueue: Queue | null = null;
 let trackingQueue: Queue | null = null;
+let emailQueue: Queue | null = null;
 let redisAvailable = false;
 
 export async function initQueues() {
@@ -34,6 +37,7 @@ export async function initQueues() {
     redisAvailable = true;
     routeQueue = new Queue(QUEUE_ROUTE_FULFILLMENT, { connection: redis });
     trackingQueue = new Queue(QUEUE_TRACKING_POLL, { connection: redis });
+    emailQueue = new Queue(QUEUE_EMAIL_SEND, { connection: redis });
     console.log('BullMQ queues connected');
   } catch (err) {
     redisAvailable = false;
@@ -71,12 +75,22 @@ export async function enqueueTrackingPoll(fulfillmentId: string) {
   return { queued: false, inline: true };
 }
 
+export async function enqueueEmailSend(emailId: string) {
+  if (redisAvailable && emailQueue) {
+    // jobId = email id → enqueueing twice is a no-op
+    await emailQueue.add('send', { emailId }, { jobId: emailId, attempts: 5, backoff: { type: 'exponential', delay: 30000 }, removeOnComplete: 1000 });
+    return { queued: true };
+  }
+  return { queued: false, inline: true };
+}
+
 export type RouteJob = Job<{ orderId: string }>;
 export type TrackingJob = Job<{ fulfillmentId: string }>;
 
 export function startWorkers(handlers: {
   route: (orderId: string) => Promise<void>;
   tracking: (fulfillmentId: string) => Promise<void>;
+  email?: (emailId: string) => Promise<void>;
 }) {
   if (!redisAvailable || !connection) return;
   new Worker(
@@ -89,5 +103,9 @@ export function startWorkers(handlers: {
     async (job: TrackingJob) => handlers.tracking(job.data.fulfillmentId),
     { connection },
   );
+  if (handlers.email) {
+    const send = handlers.email;
+    new Worker(QUEUE_EMAIL_SEND, async (job: Job<{ emailId: string }>) => send(job.data.emailId), { connection });
+  }
   console.log('BullMQ workers started');
 }
