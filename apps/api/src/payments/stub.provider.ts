@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import {
   PaymentProvider,
   ProviderEvent,
@@ -50,8 +50,10 @@ export class StubPaymentProvider implements PaymentProvider {
   async ensureCustomer(o: { organizationId: string; customerId?: string | null }) {
     return { customerId: o.customerId ?? `stub_cus_${o.organizationId.slice(-8)}` };
   }
-  async createTopUpIntent(_o: { amountCents: number }) {
-    return { paymentIntentId: `stub_pi_${randomUUID()}`, clientSecret: null, status: 'succeeded' };
+  /** Like Stripe: the same idempotency key returns the same PaymentIntent (so a retry can't credit twice). */
+  async createTopUpIntent(o: { amountCents: number; idempotencyKey?: string }) {
+    const id = o.idempotencyKey ? createHash('sha256').update(o.idempotencyKey).digest('hex').slice(0, 24) : randomUUID();
+    return { paymentIntentId: `stub_pi_${id}`, clientSecret: null, status: 'succeeded' };
   }
   async createTopUpCheckout(o: { successUrl: string }) {
     const id = `stub_cs_fuel_${randomUUID()}`;

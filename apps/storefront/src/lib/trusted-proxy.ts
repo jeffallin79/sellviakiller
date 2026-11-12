@@ -100,3 +100,17 @@ export function effectiveHost(h: { host: string | null; forwardedHost: string | 
   }
   return h.host;
 }
+
+/**
+ * The shopper's IP (Meta CAPI client_ip_address). Walks X-Forwarded-For from the right, starting
+ * at the real TCP peer and skipping hops that are trusted proxies; the first untrusted hop is the
+ * client. Anything to the left of it is client-supplied and ignored. No stamp → null.
+ */
+export function clientIp(h: { peer: string | null; forwardedFor: string | null }, trusted: Cidr[]): string | null {
+  if (!h.peer || !parseIp(h.peer)) return null;
+  const chain = [...String(h.forwardedFor ?? '').split(',').map((x) => x.trim()).filter(Boolean), h.peer];
+  let i = chain.length - 1;
+  while (i > 0 && isTrustedPeer(chain[i], trusted)) i--;
+  const ip = chain[i].replace(/^\[|\]$/g, '');
+  return parseIp(ip) ? ip.replace(/^::ffff:/i, '') : null;
+}

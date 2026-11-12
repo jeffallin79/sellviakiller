@@ -92,3 +92,8 @@
   .shophead nav { display: none; }
   .editorial { gap: 14px; }
 }
+
+/* Cookie consent (slice 3) */
+.consent { position: fixed; z-index: 40; left: 16px; right: 16px; bottom: 16px; margin: 0 auto; max-width: 640px; display: flex; gap: 14px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 14px 16px; background: rgb(var(--sf-surface)); border: var(--sf-stroke) solid rgb(var(--sf-line)); border-radius: var(--sf-radius); box-shadow: 6px 6px 0 rgb(var(--sf-scrim) / 0.25); font-size: 0.88rem; }
+.consent p { margin: 0; flex: 1 1 280px; }
+.consent__btns { display: flex; gap: 8px; }

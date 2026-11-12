@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { effectiveHost, isTrustedPeer, parseIp, parseTrustedProxies, peerFromStamp } from '../src/lib/trusted-proxy';
+import { clientIp, effectiveHost, isTrustedPeer, parseIp, parseTrustedProxies, peerFromStamp } from '../src/lib/trusted-proxy';
 
 test('parse IPs and CIDRs (v4, v6, mapped, junk ignored)', () => {
   assert.equal(parseIp('::ffff:10.1.2.3')?.v, 4);
@@ -39,4 +39,20 @@ test('peer stamp must carry this boot token (client-sent x-sf-peer is useless)',
   assert.equal(peerFromStamp('10.0.0.2;tok123', undefined), null, 'plain next start: no token → never trusted');
   assert.equal(peerFromStamp('10.0.0.2', 'tok123'), null);
   assert.equal(peerFromStamp(null, 'tok123'), null);
+});
+
+test('client IP for CAPI: rightmost untrusted hop; client-supplied XFF on the left is ignored', () => {
+  const t = parseTrustedProxies('loopback,10.0.0.0/8');
+  // no stamp → unknown
+  assert.equal(clientIp({ peer: null, forwardedFor: '1.2.3.4' }, t), null);
+  // direct (untrusted peer): the peer, whatever XFF says
+  assert.equal(clientIp({ peer: '198.51.100.7', forwardedFor: '1.2.3.4' }, t), '198.51.100.7');
+  // behind Caddy on loopback: XFF last hop is the client
+  assert.equal(clientIp({ peer: '127.0.0.1', forwardedFor: '203.0.113.9' }, t), '203.0.113.9');
+  // spoofed prefix + LB (10.x) + Caddy: still the real client
+  assert.equal(clientIp({ peer: '::1', forwardedFor: '6.6.6.6, 203.0.113.9, 10.1.2.3' }, t), '203.0.113.9');
+  // everything trusted → the leftmost hop
+  assert.equal(clientIp({ peer: '127.0.0.1', forwardedFor: '10.0.0.5' }, t), '10.0.0.5');
+  // junk → null
+  assert.equal(clientIp({ peer: '127.0.0.1', forwardedFor: 'not-an-ip' }, t), null);
 });

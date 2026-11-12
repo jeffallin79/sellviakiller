@@ -11,7 +11,7 @@ const NAV: { href: string; label: string; icon: IconName; soon?: boolean }[] = [
   { href: '/shelf', label: 'Shelf', icon: 'shelf' },
   { href: '/dispatch', label: 'Dispatch', icon: 'dispatch' },
   { href: '/emails', label: 'Emails', icon: 'email' },
-  { href: '/boost', label: 'Boost', icon: 'boost', soon: true },
+  { href: '/boost', label: 'Boost', icon: 'boost' },
   { href: '/fuel', label: 'Ad Fuel', icon: 'fuel' },
 ];
 const MORE: { href: string; label: string; icon: IconName }[] = [

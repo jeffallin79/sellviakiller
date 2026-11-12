@@ -119,6 +119,70 @@ const w = await call('GET', '/fuel');
 ok(w.json.wallet.balanceCents === 2000, 'wallet credited $20');
 const ref = await call('POST', '/fuel/refunds', { topupTxnId: w.json.txns[0].id, amountCents: 500 });
 ok(ref.status < 300 && ref.json.status === 'succeeded', 'ad fuel refund $5 (stub)');
+// ---- slice 3: Ad Fuel wallet (Checkout top-up, idempotent) + auto-reload settings ----
+{
+  const rq = `smoke-fuel-${Date.now()}`;
+  const before = (await call('GET', '/fuel/wallet')).json.wallet.balanceCents;
+  const c1 = await call('POST', '/fuel/checkout', { amountCents: 5000, requestId: rq });
+  ok(c1.status < 300 && c1.json.credited === true, `fuel checkout $50 (${c1.json.mode})`);
+  await call('POST', '/fuel/checkout', { amountCents: 5000, requestId: rq });
+  const fw = (await call('GET', '/fuel/wallet')).json;
+  ok(fw.wallet.balanceCents === before + 5000, 'same requestId twice → credited once');
+  ok(fw.ledger[0].kind === 'TOPUP' && fw.ledger[0].balanceAfterCents === fw.wallet.balanceCents, 'ledger row carries the running balance');
+  const st = await call('POST', '/fuel/settings', { autoReloadEnabled: true, thresholdCents: 2000, autoReloadCents: 2500 });
+  ok(st.status < 300 && st.json.wallet.autoReloadEnabled && st.json.wallet.card, `auto-reload on (${st.json.wallet.card?.label})`);
+}
+// ---- slice 3: Boost — stub Meta connect (OAuth), account pick, launch, sync, pause/resume ----
+{
+  const ov = (await call('GET', `/boost?storeId=${storeId}`)).json;
+  if (ov.mode !== 'stub') console.log('skip - Meta is live; stub OAuth path not available');
+  else {
+    const start = (await call('POST', '/boost/meta/connect', { storeId })).json;
+    const u = new URL(start.url);
+    const state = u.searchParams.get('state');
+    const cb = new URL(u.searchParams.get('redirect_uri'));
+    cb.searchParams.set('code', `stub_code_e2e${Date.now()}`); cb.searchParams.set('state', state);
+    const r1 = await fetch(cb, { redirect: 'manual' });
+    ok(r1.status === 302 && /connected=1/.test(r1.headers.get('location')), 'Meta OAuth callback → connected');
+    const r2 = await fetch(cb, { redirect: 'manual' });
+    ok(/expired_state/.test(r2.headers.get('location') ?? ''), 'replayed OAuth state refused');
+    const opts = (await call('GET', `/boost/meta/options?storeId=${storeId}`)).json;
+    const sel = await call('POST', '/boost/meta/account', { storeId, adAccountId: opts.adAccountId, pageId: opts.pages[0].id, pixelId: opts.pixels[0].id, testEventCode: 'TEST_E2E' });
+    ok(sel.status < 300, `ad account ${opts.adAccountId}, pixel ${opts.pixels[0].id}`);
+    const rq = `smoke-camp-${Date.now()}`;
+    const body = { storeId, storeProductId: sp.json[0].id, dailyBudgetCents: 2000, requestId: rq };
+    const [a, b] = await Promise.all([call('POST', '/boost/campaigns', body), call('POST', '/boost/campaigns', body)]);
+    const camps = (await call('GET', `/boost?storeId=${storeId}`)).json.campaigns;
+    ok(a.status < 300 && b.status < 300 && camps.length === 1 && camps[0].externalId, `double-submit → one campaign on Meta (${camps[0]?.stage})`);
+    const sy = await call('POST', '/boost/sync', { storeId });
+    ok(sy.status < 300 && sy.json.synced === 1, 'insights pulled + fuel charged');
+    const wal = (await call('GET', '/fuel/wallet')).json.wallet;
+    ok(wal.balanceCents >= 0 && wal.bonusCents >= 0, `fuel never below 0 (${wal.balanceCents}¢, fee ${ov.feePct}%)`);
+    const cid = camps[0].id;
+    ok((await call('POST', `/boost/campaigns/${cid}/pause`)).json.stage === 'PAUSED', 'pause');
+    ok(['REVIEW', 'WARMING', 'STEADY'].includes((await call('POST', `/boost/campaigns/${cid}/resume`)).json.stage), 'resume');
+    // ---- CAPI: consented order → server Purchase; browser Pixel with the same id → dedup'd ----
+    const fbp = `fb.1.${Date.now()}.12345`;
+    const co2 = await call('POST', '/checkout', {
+      storeSlug: slug, email: 'Buyer2@Example.com', name: 'Buyer Two', lines: [{ storeProductId: sp.json[1].id, quantity: 1 }],
+      shippingAddress: { line1: '2 Main', city: 'Regina', state: 'SK', postalCode: 'S4P0A1', country: 'CA' },
+      attribution: { consent: true, fbp, sourceUrl: `http://${slug}.storeforge.local/` },
+    }, { 'user-agent': 'Mozilla/5.0 e2e' });
+    const oid = new URL(co2.json.checkoutUrl).searchParams.get('orderId');
+    let ev;
+    for (let i = 0; i < 30 && ev?.metaStatus !== 'sent'; i++) {
+      ev = (await call('GET', `/boost/events?storeId=${storeId}`)).json.server.find((e) => e.orderId === oid);
+      if (ev?.metaStatus !== 'sent') await new Promise((r) => setTimeout(r, 300));
+    }
+    ok(ev?.metaStatus === 'sent' && ev.eventId === `order_${oid}` && ev.testEventCode === 'TEST_E2E', `CAPI Purchase sent (${ev?.eventId}, test code)`);
+    const px = (await call('GET', `/storefront/orders/${oid}/pixel`)).json;
+    ok(px.eventId === ev.eventId && !('email' in px), 'thank-you pixel gets the same event id, no PII');
+    ok((await call('POST', '/storefront/stub-pixel', { pixelId: px.pixelId, eventName: 'Purchase', eventId: px.eventId })).status === 202, 'browser Pixel Purchase (stub)');
+    const te = (await call('GET', `/boost/events?storeId=${storeId}`)).json.testEvents.events.filter((e) => e.eventId === ev.eventId);
+    ok(te.length === 2 && te.some((e) => e.source === 'server') && te.some((e) => e.source === 'browser' && e.deduplicated), "Test Events: server + browser, browser dedup'd");
+    ok((await call('POST', '/boost/meta/disconnect', { storeId })).status < 300, 'disconnect Meta');
+  }
+}
 const csv = await call('GET', '/export/orders.csv');
 ok(csv.status === 200 && String(csv.json).includes(order.id), 'orders CSV export');
 // ---- QA round 2 #3: storefront ignores X-Forwarded-Host from an untrusted peer ----

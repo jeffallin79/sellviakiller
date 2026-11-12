@@ -245,8 +245,14 @@ test('settings: auto-reload needs a saved card; Checkout top-up (stub) saves one
   const org = await makeOrg();
   await assert.rejects(() => wallet.updateSettings(org.id, { autoReloadEnabled: true, thresholdCents: 1000, autoReloadCents: 2000 }), /saved card|Top up once/);
   setPaymentProviderForTests(null);
-  const r = await fuel.startTopUpCheckout(org.id, 'm@x.test', 2500, uid('req'), 'http://localhost:3001/fuel');
+  const req = uid('req');
+  const r = await fuel.startTopUpCheckout(org.id, 'm@x.test', 2500, req, 'http://localhost:3001/fuel');
   assert.equal(r.credited, true);
+  // double click / retry with the same requestId: same PaymentIntent, credited once
+  const [r2, r3] = await Promise.all([1, 2].map(() => fuel.startTopUpCheckout(org.id, 'm@x.test', 2500, req, 'http://localhost:3001/fuel')));
+  assert.equal(r2.paymentIntentId, r.paymentIntentId);
+  assert.equal(r3.paymentIntentId, r.paymentIntentId);
+  assert.equal((await wallet.walletFor(org.id)).balanceCents, 2500);
   await assert.rejects(() => wallet.updateSettings(org.id, { autoReloadEnabled: true, thresholdCents: 1000, autoReloadCents: 500 }), /between/);
   await wallet.updateSettings(org.id, { autoReloadEnabled: true, thresholdCents: 1000, autoReloadCents: 2000 });
   const o = await wallet.overview(org.id);

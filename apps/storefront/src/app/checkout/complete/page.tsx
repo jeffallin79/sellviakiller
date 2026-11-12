@@ -1,14 +1,33 @@
 'use client';
 
-import { Suspense } from 'react';
+import { Suspense, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Icon } from '@storeforge/ui/icons';
 import { Callout, Collage } from '@storeforge/ui/components';
+import { getConsent, loadPixel, track } from '@/lib/pixel';
 
 function CompleteInner() {
   const params = useSearchParams();
   const stubPaid = params.get('stub_paid') === '1' || params.get('mode') === 'stub';
   const orderId = params.get('orderId');
+  useEffect(() => {
+    // Browser half of the Purchase event; the server sends the same event id via the Conversions API.
+    if (!orderId || getConsent() !== 'granted') return;
+    const key = `sf-purchase-${orderId}`;
+    try { if (sessionStorage.getItem(key)) return; } catch { /* ignore */ }
+    let tries = 0;
+    const go = async () => {
+      const r = await fetch(`/api/storefront/orders/${encodeURIComponent(orderId)}/pixel`, { cache: 'no-store' }).catch(() => null);
+      if (r?.status === 404 && tries++ < 5) { setTimeout(go, 2000); return; } // payment still confirming
+      if (!r?.ok) return;
+      const p = await r.json();
+      if (!p.pixelId) return;
+      loadPixel(p.pixelId, !!p.stub);
+      track('Purchase', { value: p.value, currency: p.currency }, p.eventId);
+      try { sessionStorage.setItem(key, '1'); } catch { /* ignore */ }
+    };
+    void go();
+  }, [orderId]);
   return (
     <section className="band">
       <div className="wrap hero">

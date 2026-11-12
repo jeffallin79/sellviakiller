@@ -53,9 +53,13 @@ export class OrdersController {
   async checkout(@Body() body: unknown, @Req() req: Request) {
     const input = CheckoutSchema.parse(body);
     // Behind the storefront's same-origin proxy the shopper's address is the first X-Forwarded-For hop.
-    const xff = String(req.headers['x-forwarded-for'] ?? '').split(',')[0]?.trim();
-    const ua = req.headers['x-sf-client-ua'] ?? req.headers['user-agent'];
-    return this.orders.checkout(input, { ip: xff || req.socket?.remoteAddress || null, userAgent: typeof ua === 'string' ? ua : null });
+    // x-sf-client-ip is set by the storefront from its trusted-proxy chain (client-sent values are
+    // stripped there). It only feeds Meta match quality, never auth or money. Not present → no IP
+    // (the socket here is the storefront, not the shopper).
+    const ipHeader = req.headers['x-sf-client-ip'];
+    const ip = typeof ipHeader === 'string' && /^[0-9a-fA-F:.]{3,45}$/.test(ipHeader) ? ipHeader : null;
+    const ua = req.headers['user-agent'];
+    return this.orders.checkout(input, { ip, userAgent: typeof ua === 'string' ? ua.slice(0, 512) : null });
   }
 
   @Get('orders')

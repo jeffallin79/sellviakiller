@@ -10,6 +10,8 @@ import { api } from '@/lib/api';
 import { useCart, shippingFor, FREE_SHIPPING_CENTS, SHIPPING_CENTS } from '@/lib/cart';
 import { titleOf, type StoreProduct } from '@/lib/store';
 import { useShopHref } from '@/lib/base';
+import { attribution, track } from '@/lib/pixel';
+import { ShopPixel } from '@/components/Consent';
 
 const ShopCtx = createContext<{ openCart: () => void }>({ openCart: () => {} });
 export const useShop = () => useContext(ShopCtx);
@@ -43,6 +45,7 @@ export function ShopFrame({ slug, store, products, children }: { slug: string; s
           <span className="sf-muted"><Icon name="secure" size={16} /> Card payments by Stripe · Shop built on StoreForge</span>
         </div>
       </footer>
+      <ShopPixel storeId={store?.id} />
       {open && <CartDrawer slug={slug} products={products ?? []} onClose={() => setOpen(false)} />}
     </ShopCtx.Provider>
   );
@@ -62,6 +65,7 @@ function CartDrawer({ slug, products, onClose }: { slug: string; products: Store
     e.preventDefault();
     setError(''); setBusy(true);
     const fd = new FormData(e.currentTarget);
+    track('InitiateCheckout', { value: (subtotal + shipping) / 100, currency: 'USD', num_items: lines.reduce((a, l) => a + l.q, 0) });
     try {
       const res = await api<any>('/checkout', {
         method: 'POST',
@@ -69,6 +73,7 @@ function CartDrawer({ slug, products, onClose }: { slug: string; products: Store
           storeSlug: slug, email: fd.get('email'), name: fd.get('name'),
           lines: lines.map((l) => ({ storeProductId: l.id, quantity: l.q })),
           shippingAddress: { line1: fd.get('line1'), city: fd.get('city'), state: fd.get('state'), postalCode: fd.get('postalCode'), country: fd.get('country') },
+          attribution: attribution(),
         }),
       });
       if (res.checkoutUrl) { clear(); window.location.href = res.checkoutUrl; return; }

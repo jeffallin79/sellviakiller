@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { classifyHost, decide, needsResolve, type Resolved } from '@/lib/host-routing';
-import { effectiveHost, parseTrustedProxies, peerFromStamp } from '@/lib/trusted-proxy';
+import { clientIp, effectiveHost, parseTrustedProxies, peerFromStamp } from '@/lib/trusted-proxy';
 
 const ROOT = process.env.NEXT_PUBLIC_STOREFRONT_ROOT_DOMAIN ?? 'storeforge.local';
 // Server-side API base (can be an internal address); falls back to the public one.
@@ -33,6 +33,15 @@ async function resolve(host: string): Promise<Resolved | 'error'> {
 export async function middleware(req: NextRequest) {
   // X-Forwarded-Host only from a TRUSTED_PROXIES peer (stamped by server.mjs); otherwise Host.
   const peer = peerFromStamp(req.headers.get('x-sf-peer'), process.env.SF_PEER_TOKEN);
+  if (req.nextUrl.pathname === '/api/checkout') {
+    // Proxied to the API (next.config rewrites): pass the shopper's real IP for Meta CAPI matching.
+    const headers = new Headers(req.headers);
+    headers.delete('x-sf-peer');
+    headers.delete('x-sf-client-ip');
+    const ip = clientIp({ peer, forwardedFor: req.headers.get('x-forwarded-for') }, TRUSTED);
+    if (ip) headers.set('x-sf-client-ip', ip);
+    return NextResponse.next({ request: { headers } });
+  }
   const host = effectiveHost({ host: req.headers.get('host'), forwardedHost: req.headers.get('x-forwarded-host'), peer }, TRUSTED);
   const c = classifyHost(host, ROOT);
   const { pathname, search } = req.nextUrl;
@@ -63,5 +72,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next|favicon.ico|api|catalog/).*)'],
+  matcher: ['/((?!_next|favicon.ico|api|catalog/).*)', '/api/checkout'],
 };
