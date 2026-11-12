@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { classifyHost, decide, needsResolve, type Resolved } from '@/lib/host-routing';
+import { effectiveHost, parseTrustedProxies, peerFromStamp } from '@/lib/trusted-proxy';
 
 const ROOT = process.env.NEXT_PUBLIC_STOREFRONT_ROOT_DOMAIN ?? 'storeforge.local';
 // Server-side API base (can be an internal address); falls back to the public one.
 const API = (process.env.STOREFRONT_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/$/, '');
+
+const TRUSTED = parseTrustedProxies(process.env.TRUSTED_PROXIES);
 
 /** Small per-instance cache: 60 s for hits, 15 s for misses, so new domains go live quickly. */
 const cache = new Map<string, { at: number; ttl: number; value: Resolved }>();
@@ -28,13 +31,16 @@ async function resolve(host: string): Promise<Resolved | 'error'> {
 }
 
 export async function middleware(req: NextRequest) {
-  const host = req.headers.get('x-forwarded-host') ?? req.headers.get('host');
+  // X-Forwarded-Host only from a TRUSTED_PROXIES peer (stamped by server.mjs); otherwise Host.
+  const peer = peerFromStamp(req.headers.get('x-sf-peer'), process.env.SF_PEER_TOKEN);
+  const host = effectiveHost({ host: req.headers.get('host'), forwardedHost: req.headers.get('x-forwarded-host'), peer }, TRUSTED);
   const c = classifyHost(host, ROOT);
   const { pathname, search } = req.nextUrl;
   const resolved = needsResolve(c) ? await resolve(c.kind === 'custom' ? c.host : `${(c as any).slug}.${ROOT}`) : undefined;
   const d = decide(c, pathname, search, resolved);
 
   const headers = new Headers(req.headers);
+  headers.delete('x-sf-peer'); // never leaks to pages
   switch (d.action) {
     case 'redirect':
       return NextResponse.redirect(d.location, d.status);
@@ -57,5 +63,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next|favicon.ico|api).*)'],
+  matcher: ['/((?!_next|favicon.ico|api|catalog/).*)'],
 };
