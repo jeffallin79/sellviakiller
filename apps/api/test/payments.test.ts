@@ -284,3 +284,13 @@ test('ad fuel (stub): top-up credits immediately, no network', async () => {
   await fuel.startTopUp(org.id, 'm@example.com', 2000, uid('req'));
   assert.equal((await fuel.wallet(org.id)).balanceCents, 2000);
 });
+
+test('billing plans expose the platform fee from PLATFORM_FEE_BPS (billing page reads it)', async () => {
+  delete process.env.PLATFORM_FEE_BPS;
+  assert.equal((await billing.listPlans()).platformFeeBps, 0);
+  process.env.PLATFORM_FEE_BPS = '125';
+  assert.equal((await billing.listPlans()).platformFeeBps, 125);
+  process.env.PLATFORM_FEE_BPS = '99999';
+  assert.equal((await billing.listPlans()).platformFeeBps, 2000);
+  delete process.env.PLATFORM_FEE_BPS;
+});
