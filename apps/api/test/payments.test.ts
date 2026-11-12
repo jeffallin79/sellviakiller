@@ -10,17 +10,20 @@ import { PayoutsService } from '../src/payments/payouts.service';
 import { WebhookProcessorService } from '../src/payments/webhook-processor.service';
 import { NotificationsService } from '../src/payments/notifications.service';
 import { DisputesService } from '../src/payments/disputes.service';
+import { EmailService } from '../src/email/email.service';
+import { RefundsService } from '../src/orders/refunds.service';
 import { StripeWebhooksController } from '../src/payments/payments.controller';
 import { FakeStripeProvider, WHSEC, WHSEC_CONNECT, signed, evt, makeOrg, seedPlans, makeStoreWithProduct, checkoutInput, uid } from './helpers';
 
 let routed: string[] = [];
 const fulfillment = { routeOrder: async (id: string) => { routed.push(id); return {} as any; } } as any;
-const orders = new OrdersService(fulfillment);
+const emails = new EmailService();
+const orders = new OrdersService(fulfillment, emails);
 const billing = new BillingService();
 const fuel = new FuelService();
 const payouts = new PayoutsService();
 const notifications = new NotificationsService();
-const processor = new WebhookProcessorService(orders, billing, fuel, payouts, new DisputesService(notifications), notifications);
+const processor = new WebhookProcessorService(orders, billing, fuel, payouts, new DisputesService(notifications), notifications, new RefundsService(emails));
 const controller = new StripeWebhooksController(processor);
 let fake: FakeStripeProvider;
 

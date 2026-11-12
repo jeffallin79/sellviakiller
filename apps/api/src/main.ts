@@ -5,6 +5,7 @@ import { toNodeHandler } from 'better-auth/node';
 import type { Request, Response } from 'express';
 import { AppModule } from './app.module';
 import { auth } from './auth/better-auth';
+import { ZodValidationFilter } from './common/zod.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
@@ -26,6 +27,7 @@ async function bootstrap() {
   });
 
   app.setGlobalPrefix('api');
+  app.useGlobalFilters(new ZodValidationFilter());
 
   const config = new DocumentBuilder()
     .setTitle('StoreForge API')

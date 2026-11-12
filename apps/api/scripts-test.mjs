@@ -10,7 +10,23 @@ if (!u.pathname.slice(1).endsWith('_test')) {
 }
 const schema = `t_${Date.now()}`;
 u.searchParams.set('schema', schema);
-const env = { ...process.env, DATABASE_URL: u.toString(), NODE_ENV: 'test', STRIPE_SECRET_KEY: '', REDIS_URL: 'redis://127.0.0.1:1' };
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+const outbox = mkdtempSync(join(tmpdir(), 'sf-test-outbox-'));
+const env = {
+  ...process.env,
+  DATABASE_URL: u.toString(),
+  NODE_ENV: 'test',
+  STRIPE_SECRET_KEY: '',
+  RESEND_API_KEY: '',
+  EMAIL_OUTBOX_DIR: outbox,
+  DOMAIN_DNS_MODE: 'stub',
+  DOMAIN_TLS_PROVIDER: 'stub',
+  NEXT_PUBLIC_STOREFRONT_ROOT_DOMAIN: 'storeforge.local',
+  STOREFRONT_URL: '',
+  REDIS_URL: 'redis://127.0.0.1:1',
+};
 const run = (cmd, cwd) => execSync(cmd, { stdio: 'inherit', env, cwd });
 console.log(`test schema: ${schema}`);
 run('npx prisma migrate deploy', '../../packages/db');

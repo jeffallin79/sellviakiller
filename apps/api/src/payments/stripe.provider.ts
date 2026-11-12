@@ -197,9 +197,14 @@ export class StripePaymentProvider implements PaymentProvider {
     return { paymentIntentId: pi.id, clientSecret: pi.client_secret, status: pi.status };
   }
 
-  async refundPayment(o: { paymentId: string; amountCents: number; idempotencyKey: string; metadata?: Record<string, string> }) {
+  async refundPayment(o: { paymentId: string; amountCents: number; idempotencyKey: string; metadata?: Record<string, string>; reverseTransfer?: boolean }) {
     const r = await this.stripe.refunds.create(
-      { payment_intent: o.paymentId, amount: o.amountCents, metadata: o.metadata },
+      {
+        payment_intent: o.paymentId,
+        amount: o.amountCents,
+        metadata: o.metadata,
+        ...(o.reverseTransfer ? { reverse_transfer: true, refund_application_fee: true } : {}),
+      },
       { idempotencyKey: o.idempotencyKey },
     );
     return { refundId: r.id, status: r.status ?? 'pending' };

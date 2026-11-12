@@ -88,6 +88,9 @@ importers:
       '@storeforge/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@storeforge/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       better-auth:
         specifier: ^1.7.22
         version: 1.7.22(@prisma/client@6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3))(next@15.5.29(@types/node@22.20.3)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(prisma@6.19.3(typescript@5.9.3))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)

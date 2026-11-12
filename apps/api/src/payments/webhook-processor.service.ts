@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { prisma, Prisma } from '@storeforge/db';
 import { OrdersService, PaymentMismatchError } from '../orders/orders.service';
 import { NotificationsService } from './notifications.service';
+import { RefundsService } from '../orders/refunds.service';
 import { BillingService } from '../billing/billing.service';
 import { FuelService } from './fuel.service';
 import { PayoutsService } from './payouts.service';
@@ -30,6 +31,7 @@ export class WebhookProcessorService {
     private readonly payouts: PayoutsService,
     private readonly disputes: DisputesService,
     private readonly notifications: NotificationsService,
+    private readonly refunds: RefundsService,
   ) {}
 
   async process(event: ProviderEvent, endpoint: WebhookEndpoint): Promise<WebhookResult> {
@@ -144,6 +146,10 @@ export class WebhookProcessorService {
       case 'refund.created':
       case 'refund.updated':
       case 'refund.failed': {
+        if (o.metadata?.kind === 'store_order_refund') {
+          await this.refunds.applyStatus({ refundId: o.id, status: event.type === 'refund.failed' ? 'failed' : o.status, orderRefundId: o.metadata.orderRefundId });
+          return 'order_refund_status';
+        }
         if (o.metadata?.kind !== 'ad_fuel_refund') return 'ignored';
         await this.fuel.applyRefundStatus(o.id, event.type === 'refund.failed' ? 'failed' : o.status);
         return 'fuel_refund_status';

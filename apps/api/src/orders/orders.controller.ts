@@ -15,6 +15,14 @@ import { AuthGuard } from '../common/auth.guard';
 import { CurrentUser } from '../common/current-user';
 import { AuthService } from '../auth/auth.service';
 import { isStubPayments } from '../payments';
+import { RefundsService } from './refunds.service';
+import { z } from 'zod';
+
+const RefundSchema = z.object({
+  amountCents: z.number().int().positive().optional(),
+  reason: z.string().max(500).optional(),
+  requestId: z.string().min(8).max(100),
+});
 
 @ApiTags('orders')
 @Controller()
@@ -22,7 +30,22 @@ export class OrdersController {
   constructor(
     private readonly orders: OrdersService,
     private readonly authService: AuthService,
+    private readonly refunds: RefundsService,
   ) {}
+
+  /** Merchant refund. requestId makes retries idempotent. Customer is emailed when it succeeds. */
+  @Post('orders/:id/refunds')
+  @UseGuards(AuthGuard)
+  async refund(@CurrentUser() user: { id: string }, @Param('id') id: string, @Body() body: unknown) {
+    const input = RefundSchema.parse(body);
+    return this.refunds.create(await this.authService.requireAccountId(user.id), id, input);
+  }
+
+  @Get('orders/:id/refunds')
+  @UseGuards(AuthGuard)
+  async listRefunds(@CurrentUser() user: { id: string }, @Param('id') id: string) {
+    return this.refunds.list(await this.authService.requireAccountId(user.id), id);
+  }
 
   @Post('checkout')
   async checkout(@Body() body: unknown) {

@@ -89,6 +89,8 @@ export interface PaymentProvider {
     amountCents: number;
     idempotencyKey: string;
     metadata?: Record<string, string>;
+    /** Storefront destination charges: pull the money back from the merchant's connected account */
+    reverseTransfer?: boolean;
   }): Promise<{ refundId: string; status: string }>;
   /** Current status of a refund we created. */
   getRefund(refundId: string): Promise<{ refundId: string; status: string } | null>;

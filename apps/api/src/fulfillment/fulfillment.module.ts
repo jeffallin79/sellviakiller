@@ -3,9 +3,10 @@ import { FulfillmentService } from './fulfillment.service';
 import { FulfillmentController } from './fulfillment.controller';
 import { SuppliersModule } from '../suppliers/suppliers.module';
 import { AuthModule } from '../auth/auth.module';
+import { EmailModule } from '../email/email.module';
 
 @Module({
-  imports: [SuppliersModule, AuthModule],
+  imports: [SuppliersModule, AuthModule, EmailModule],
   controllers: [FulfillmentController],
   providers: [FulfillmentService],
   exports: [FulfillmentService],

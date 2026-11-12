@@ -10,6 +10,8 @@ import { PaymentsModule } from './payments/payments.module';
 import { SuppliersModule } from './suppliers/suppliers.module';
 import { ExportModule } from './export/export.module';
 import { JobsModule } from './jobs/jobs.module';
+import { DomainsModule } from './domains/domains.module';
+import { EmailModule } from './email/email.module';
 import { HealthController } from './health.controller';
 
 @Module({
@@ -25,6 +27,8 @@ import { HealthController } from './health.controller';
     SuppliersModule,
     ExportModule,
     JobsModule,
+    DomainsModule,
+    EmailModule,
   ],
   controllers: [HealthController],
 })

@@ -15,11 +15,16 @@ import type { CheckoutInput } from '@storeforge/shared';
 import { getPaymentProvider, platformFeeCents as computePlatformFee } from '../payments';
 import { FulfillmentService } from '../fulfillment/fulfillment.service';
 import { enqueueRouteFulfillment } from '../jobs/queues';
+import { EmailService } from '../email/email.service';
+import { DomainsService } from '../domains/domains.service';
 
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
-  constructor(private readonly fulfillment: FulfillmentService) {}
+  constructor(
+    private readonly fulfillment: FulfillmentService,
+    private readonly emails: EmailService,
+  ) {}
 
   async checkout(input: CheckoutInput) {
     const store = await prisma.store.findFirst({
@@ -88,11 +93,10 @@ export class OrdersService {
       include: { lines: true },
     });
 
-    const root =
-      process.env.STOREFRONT_URL ??
-      `http://${store.slug}.${process.env.NEXT_PUBLIC_STOREFRONT_ROOT_DOMAIN ?? 'storeforge.local'}:3000`;
-    const successUrl = `${root}/checkout/complete?orderId=${order.id}&session_id={CHECKOUT_SESSION_ID}`;
-    const cancelUrl = `${root}/s/${store.slug}?checkout=cancelled`;
+    // Return to the store's own domain when it has one (slice 2), else the platform URL.
+    const urls = await DomainsService.storeUrls(store);
+    const successUrl = `${urls.origin}/checkout/complete?orderId=${order.id}&session_id={CHECKOUT_SESSION_ID}`;
+    const cancelUrl = `${urls.origin}${urls.shopPath}${urls.shopPath.includes('?') ? '&' : '?'}checkout=cancelled`;
 
     const pay = await provider.createOrderCheckout({
       orderId: order.id,
@@ -183,6 +187,9 @@ export class OrdersService {
     const order = await prisma.order.findUnique({ where: { id: orderId } });
     if (!order) throw new NotFoundException('Order not found');
     if (r.count !== 1) return { ...order, transitioned: false };
+
+    // Customer confirmation (deduped per order; never blocks fulfillment).
+    await this.emails.orderEvent('ORDER_CONFIRMED', orderId);
 
     const q = await enqueueRouteFulfillment(orderId);
     if (q.inline) {

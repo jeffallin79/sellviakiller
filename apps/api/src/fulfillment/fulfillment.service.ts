@@ -3,10 +3,14 @@ import { prisma, OrderStatus, FulfillmentStatus, type Fulfillment } from '@store
 import type { NormalizedOrder } from '@storeforge/shared';
 import { SuppliersService } from '../suppliers/suppliers.service';
 import { enqueueTrackingPoll } from '../jobs/queues';
+import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class FulfillmentService {
-  constructor(private readonly suppliers: SuppliersService) {}
+  constructor(
+    private readonly suppliers: SuppliersService,
+    private readonly emails: EmailService,
+  ) {}
 
   async routeOrder(orderId: string): Promise<Fulfillment> {
     const order = await prisma.order.findUnique({
@@ -62,6 +66,9 @@ export class FulfillmentService {
       },
     });
     if (!order) throw new NotFoundException('Order not found');
+    if (order.status === OrderStatus.REFUNDED || order.status === OrderStatus.CANCELLED || order.status === OrderStatus.PENDING_PAYMENT) {
+      throw new BadRequestException(`Can't send a ${order.status.toLowerCase().replace(/_/g, ' ')} order to the supplier`);
+    }
 
     let fulfillment = order.fulfillment;
     if (!fulfillment) {
@@ -150,13 +157,24 @@ export class FulfillmentService {
           trackingNumber: info.trackingNumber,
           carrier: info.carrier,
           status: FulfillmentStatus.SHIPPED,
-          shippedAt: new Date(),
+          shippedAt: fulfillment.shippedAt ?? new Date(),
         },
       });
-      await prisma.order.update({
-        where: { id: fulfillment.orderId },
+      // Transition once → one "shipped" email, however often tracking is polled.
+      const shipped = await prisma.order.updateMany({
+        where: { id: fulfillment.orderId, status: { in: [OrderStatus.PAID, OrderStatus.AWAITING_MERCHANT_APPROVAL, OrderStatus.FULFILLMENT_SUBMITTED] } },
         data: { status: OrderStatus.SHIPPED },
       });
+      if (shipped.count === 1) await this.emails.orderEvent('ORDER_SHIPPED', fulfillment.orderId);
+    }
+    if (info.status === 'delivered') {
+      const delivered = await prisma.order.updateMany({
+        where: { id: fulfillment.orderId, status: OrderStatus.SHIPPED },
+        data: { status: OrderStatus.DELIVERED },
+      });
+      if (delivered.count === 1) {
+        await this.emails.orderEvent('ORDER_DELIVERED', fulfillment.orderId);
+      }
     }
 
     for (const ev of info.events) {
