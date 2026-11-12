@@ -19,7 +19,7 @@ function CompleteInner() {
           <p className="hero__lede">
             {stubPaid ? 'This was a test order. It now appears in the shop owner’s Dispatch.' : 'Your payment is being confirmed. A receipt is on its way to your inbox, and tracking follows as soon as your order ships.'}
           </p>
-          {orderId && <p className="sf-muted">Order <span className="sf-mono">#{orderId.slice(-6).toUpperCase()}</span></p>}
+          {orderId && <p className="sf-muted">Order <span className="sf-mono">#{orderId.slice(-8).toUpperCase()}</span></p>}
         </div>
         <Collage />
       </div>

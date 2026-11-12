@@ -9,6 +9,7 @@ import { ProductImage } from '@storeforge/ui/product-image';
 import { api } from '@/lib/api';
 import { useCart, shippingFor, FREE_SHIPPING_CENTS, SHIPPING_CENTS } from '@/lib/cart';
 import { titleOf, type StoreProduct } from '@/lib/store';
+import { useShopHref } from '@/lib/base';
 
 const ShopCtx = createContext<{ openCart: () => void }>({ openCart: () => {} });
 export const useShop = () => useContext(ShopCtx);
@@ -16,15 +17,16 @@ export const useShop = () => useContext(ShopCtx);
 export function ShopFrame({ slug, store, products, children }: { slug: string; store: any; products: StoreProduct[] | null; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const { count } = useCart(slug);
+  const href = useShopHref(slug);
   const name = store?.name ?? slug;
   return (
     <ShopCtx.Provider value={{ openCart: () => setOpen(true) }}>
       <header className="shophead">
         <div className="wrap shophead__in">
-          <Link href={`/s/${slug}`} className="wordmark"><span className="wordmark__dot" aria-hidden="true" />{name}</Link>
+          <Link href={href()} className="wordmark"><span className="wordmark__dot" aria-hidden="true" />{name}</Link>
           <nav aria-label="Shop">
-            <Link href={`/s/${slug}#shelf`}>Shop all</Link>
-            <Link href={`/s/${slug}#shipping`}>Shipping</Link>
+            <Link href={href('#shelf')}>Shop all</Link>
+            <Link href={href('#shipping')}>Shipping</Link>
           </nav>
           <div className="shophead__end">
             <ThemeToggle compact />

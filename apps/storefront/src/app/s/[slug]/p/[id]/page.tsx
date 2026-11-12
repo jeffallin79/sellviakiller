@@ -8,6 +8,7 @@ import { Money } from '@storeforge/ui/components';
 import { ProductImage } from '@storeforge/ui/product-image';
 import { ShopFrame, useShop } from '@/components/ShopFrame';
 import { useCart, FREE_SHIPPING_CENTS, SHIPPING_CENTS } from '@/lib/cart';
+import { useShopHref } from '@/lib/base';
 import { useStore, titleOf, type StoreProduct } from '@/lib/store';
 
 export default function ProductPage() {
@@ -15,6 +16,7 @@ export default function ProductPage() {
   const slug = String(params.slug);
   const id = String(params.id);
   const { store, products, error } = useStore(slug);
+  const href = useShopHref(slug);
   const p = products?.find((x) => x.id === id);
 
   return (
@@ -22,7 +24,7 @@ export default function ProductPage() {
       <section className="band">
         <div className="wrap">
           {products === null && !error ? <p className="sf-muted">Loading…</p> : !p ? (
-            <><h1>Item not found</h1><Link href={`/s/${slug}`}>Back to the shop</Link></>
+            <><h1>Item not found</h1><Link href={href()}>Back to the shop</Link></>
           ) : <Detail p={p} slug={slug} />}
         </div>
       </section>
@@ -31,13 +33,14 @@ export default function ProductPage() {
 }
 
 function Detail({ p, slug }: { p: StoreProduct; slug: string }) {
+  const href = useShopHref(slug);
   const [qty, setQty] = useState(1);
   const { add } = useCart(slug);
   const { openCart } = useShop();
   const arrive = (d: number) => new Date(Date.now() + d * 86400000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   return (
     <>
-      <nav className="crumbs" aria-label="Breadcrumb"><Link href={`/s/${slug}`}>Shop</Link><span className="sf-muted">/</span><span className="sf-muted">{titleOf(p)}</span></nav>
+      <nav className="crumbs" aria-label="Breadcrumb"><Link href={href()}>Shop</Link><span className="sf-muted">/</span><span className="sf-muted">{titleOf(p)}</span></nav>
       <div className="pdp">
         <div className="pdp__img"><ProductImage src={p.product.imageUrl} alt={titleOf(p)} eager /></div>
         <div>

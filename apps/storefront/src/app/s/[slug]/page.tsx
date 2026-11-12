@@ -7,6 +7,7 @@ import { Badge, Collage, Money } from '@storeforge/ui/components';
 import { ProductImage } from '@storeforge/ui/product-image';
 import { ShopFrame } from '@/components/ShopFrame';
 import { useCart } from '@/lib/cart';
+import { useShopHref } from '@/lib/base';
 import { useStore, titleOf, type StoreProduct } from '@/lib/store';
 
 export default function StoreHome() {
@@ -79,13 +80,14 @@ export default function StoreHome() {
 }
 
 function Tile({ p, slug, feature, onAdd }: { p: StoreProduct; slug: string; feature: boolean; onAdd: () => void }) {
+  const href = useShopHref(slug);
   return (
     <article className={`tile ${feature ? 'tile--feature' : ''}`}>
-      <Link href={`/s/${slug}/p/${p.id}`} className="tile__img">
+      <Link href={href(`/p/${p.id}`)} className="tile__img">
         <ProductImage src={p.product.imageUrl} alt={titleOf(p)} eager={feature} />
         {p.product.etaDaysMax <= 10 && <span className="tile__tag"><Badge tone="money">Arrives fast</Badge></span>}
       </Link>
-      <Link href={`/s/${slug}/p/${p.id}`} style={{ color: 'inherit', textDecoration: 'none' }}><h3>{titleOf(p)}</h3></Link>
+      <Link href={href(`/p/${p.id}`)} style={{ color: 'inherit', textDecoration: 'none' }}><h3>{titleOf(p)}</h3></Link>
       <div className="tile__meta">
         <span className="tile__price"><Money cents={p.priceCents} /></span>
         <button className="sf-btn sf-btn--sm" onClick={onAdd} aria-label={`Add ${titleOf(p)} to bag`}><Icon name="add" size={16} />Add</button>
