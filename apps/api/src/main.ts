@@ -29,7 +29,7 @@ async function bootstrap() {
 
   const config = new DocumentBuilder()
     .setTitle('StoreForge API')
-    .setDescription('Phase 0 MVP — Square payments, multi-tenant stores, supplier adapters')
+    .setDescription('Multi-tenant stores, Stripe payments (Billing, Connect Express, Ad Fuel), supplier adapters')
     .setVersion('0.1.0')
     .addCookieAuth('better-auth.session_token')
     .build();

@@ -74,7 +74,7 @@ export default function StorePage() {
         window.location.href = res.checkoutUrl;
         return;
       }
-      if (res.checkoutUrl && process.env.NEXT_PUBLIC_SQUARE_LIVE === '1') {
+      if (res.checkoutUrl) {
         window.location.href = res.checkoutUrl;
       } else {
         setCheckoutOpen(false);
@@ -98,7 +98,7 @@ export default function StorePage() {
     <div className="wrap">
       <div className="hero">
         <h1>{store?.name ?? slug}</h1>
-        <p className="muted">Powered by StoreForge · Honest supplier ETAs · Square checkout</p>
+        <p className="muted">Powered by StoreForge · Honest supplier ETAs · Secure checkout</p>
       </div>
 
       {products.length === 0 && (
@@ -137,7 +137,7 @@ export default function StorePage() {
             onSubmit={checkout}
             style={{ background: '#fff', padding: 24, borderRadius: 12, width: 'min(420px, 100%)' }}
           >
-            <h2 style={{ fontFamily: 'system-ui' }}>Checkout (Square)</h2>
+            <h2 style={{ fontFamily: 'system-ui' }}>Checkout</h2>
             <label className="muted">Name</label>
             <input name="name" required defaultValue="Test Customer" />
             <label className="muted">Email</label>
@@ -150,7 +150,7 @@ export default function StorePage() {
             <input name="state" required defaultValue="TX" />
             <label className="muted">Postal</label>
             <input name="postalCode" required defaultValue="78701" />
-            <button className="btn" type="submit">Pay with Square</button>
+            <button className="btn" type="submit">Continue to payment</button>
             <button type="button" className="btn" style={{ marginLeft: 8, background: '#666' }} onClick={() => setCheckoutOpen(false)}>
               Cancel
             </button>
@@ -160,7 +160,7 @@ export default function StorePage() {
 
       {stubMode && (
         <p className="stub-badge" role="status" style={{ marginTop: 16 }}>
-          STUB / SANDBOX PAYMENT — no Square charge was made
+          STUB / SANDBOX PAYMENT — no card was charged
         </p>
       )}
       {msg && <p className="muted" style={{ marginTop: 16 }}>{msg}</p>}

@@ -22,8 +22,21 @@ export default function BillingPage() {
         method: 'POST',
         body: JSON.stringify({ planId }),
       });
+      if (res.checkoutUrl && res.mode !== 'stub') {
+        window.location.href = res.checkoutUrl;
+        return;
+      }
       setSub(res.subscription);
-      setMsg(res.square?.message ?? 'Subscribed');
+      setMsg(res.message ?? 'Subscribed');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed');
+    }
+  }
+
+  async function portal() {
+    try {
+      const res = await api<any>('/billing/portal', { method: 'POST' });
+      window.location.href = res.url;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed');
     }
@@ -31,8 +44,9 @@ export default function BillingPage() {
 
   return (
     <div>
-      <h1>Billing (Square only)</h1>
-      <p className="muted">No Stripe. Mode: {plans?.mode ?? '…'}</p>
+      <h1>Billing</h1>
+      <p className="muted">Payments by Stripe · mode: {plans?.mode ?? '…'}</p>
+      <button className="btn secondary" onClick={portal}>Manage billing</button>
       {sub && (
         <div className="card">
           <strong>Current:</strong> {sub.plan?.name} — {sub.status}

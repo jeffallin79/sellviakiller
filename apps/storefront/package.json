@@ -6,7 +6,8 @@
     "dev": "next dev -p 3000",
     "build": "next build",
     "start": "next start -p 3000",
-    "lint": "echo ok"
+    "lint": "echo ok",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@storeforge/shared": "workspace:*",

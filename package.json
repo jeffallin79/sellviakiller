@@ -11,7 +11,10 @@
     "db:push": "pnpm --filter @storeforge/db push",
     "db:seed": "pnpm --filter @storeforge/db seed",
     "docker:up": "docker compose up -d",
-    "docker:down": "docker compose down"
+    "docker:down": "docker compose down",
+    "db:deploy": "pnpm --filter @storeforge/db migrate:deploy",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
     "turbo": "^2.3.3",

@@ -1,19 +1,26 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, Logger } from '@nestjs/common';
 import { prisma, OrderStatus } from '@storeforge/db';
 import type { CheckoutInput } from '@storeforge/shared';
-import { createSquareCheckout } from '../billing/square.client';
+import { getPaymentProvider, platformFeeCents as computePlatformFee } from '../payments';
 import { FulfillmentService } from '../fulfillment/fulfillment.service';
 import { enqueueRouteFulfillment } from '../jobs/queues';
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
   constructor(private readonly fulfillment: FulfillmentService) {}
 
   async checkout(input: CheckoutInput) {
     const store = await prisma.store.findFirst({
       where: { slug: input.storeSlug, deletedAt: null, status: 'ACTIVE' },
+      include: { organization: true },
     });
     if (!store) throw new NotFoundException('Store not found');
+    const provider = getPaymentProvider();
+    const org = store.organization;
+    if (provider.kind !== 'stub' && (!org.payoutAccountId || !org.payoutChargesEnabled || org.payoutProvider !== provider.kind)) {
+      throw new ConflictException("This store isn't set up to take payments yet.");
+    }
 
     const storeProducts = await prisma.storeProduct.findMany({
       where: {
@@ -45,8 +52,7 @@ export class OrdersService {
 
     const shippingCents = subtotalCents >= 5000 ? 0 : 499;
     const totalCents = subtotalCents + shippingCents;
-    const feeBps = Number(process.env.SQUARE_PLATFORM_FEE_BPS ?? 100);
-    const platformFeeCents = Math.round((totalCents * feeBps) / 10000);
+    const platformFeeCents = computePlatformFee(totalCents);
 
     const order = await prisma.order.create({
       data: {
@@ -64,6 +70,8 @@ export class OrdersService {
         shippingCents,
         totalCents,
         platformFeeCents,
+        provider: provider.kind,
+        payoutAccountId: provider.kind === 'stub' ? null : org.payoutAccountId,
         lines: { create: lineData },
       },
       include: { lines: true },
@@ -72,36 +80,77 @@ export class OrdersService {
     const root =
       process.env.STOREFRONT_URL ??
       `http://${store.slug}.${process.env.NEXT_PUBLIC_STOREFRONT_ROOT_DOMAIN ?? 'storeforge.local'}:3000`;
-    const redirectUrl = `${root}/checkout/complete`;
+    const successUrl = `${root}/checkout/complete?orderId=${order.id}&session_id={CHECKOUT_SESSION_ID}`;
+    const cancelUrl = `${root}/s/${store.slug}?checkout=cancelled`;
 
-    const pay = await createSquareCheckout({
-      amountCents: totalCents,
-      currency: 'USD',
+    const pay = await provider.createOrderCheckout({
       orderId: order.id,
-      redirectUrl,
-      note: `Order ${order.id} @ ${store.slug}`,
+      storeSlug: store.slug,
+      currency: order.currency,
+      customerEmail: input.email,
+      lines: lineData.map((l) => ({ name: l.title, unitAmountCents: l.unitPriceCents, quantity: l.quantity })),
+      shippingCents,
+      destinationAccountId: org.payoutAccountId ?? 'stub',
+      applicationFeeCents: platformFeeCents,
+      successUrl,
+      cancelUrl,
     });
+    await prisma.order.update({ where: { id: order.id }, data: { providerCheckoutId: pay.checkoutId } });
 
-    // Stub path: mark paid immediately when no Square keys (demo)
-    if (!process.env.SQUARE_ACCESS_TOKEN) {
-      await this.markPaid(order.id, `stub_payment_${order.id.slice(-8)}`);
+    // Stub path: mark paid immediately when no Stripe keys (demo)
+    if (provider.kind === 'stub') {
+      await this.markPaid(order.id, `stub_payment_${order.id.slice(-8)}`, 'stub');
       return {
         order: await this.get(order.id),
         checkoutUrl: pay.url,
         mode: 'stub',
-        message: 'Stub checkout — order marked PAID. Configure SQUARE_* for live Payment Links.',
+        message: 'Stub checkout — order marked PAID, no card charged. Set STRIPE_* for real Checkout.',
       };
     }
 
+    // Stripe: the order turns PAID only from the verified checkout.session.completed webhook.
     return {
       order,
       checkoutUrl: pay.url,
-      mode: pay.mode ?? 'sandbox',
+      mode: provider.mode(),
       platformFeeCents,
     };
   }
 
-  async markPaid(orderId: string, squarePaymentId: string) {
+  /** Webhook path: checks amount + currency against the order before marking it paid. */
+  async markProviderPaid(
+    orderId: string,
+    p: { provider: string; paymentId: string; checkoutId?: string; amountCents?: number; currency?: string },
+  ): Promise<string> {
+    const order = await prisma.order.findUnique({ where: { id: orderId } });
+    if (!order) {
+      this.logger.warn(`Paid event for unknown order ${orderId}`);
+      return 'order_not_found';
+    }
+    if (order.status !== OrderStatus.PENDING_PAYMENT) return 'order_already_processed';
+    if (p.checkoutId && order.providerCheckoutId && order.providerCheckoutId !== p.checkoutId) {
+      this.logger.error(`Order ${orderId}: checkout id mismatch (${p.checkoutId})`);
+      return 'checkout_mismatch';
+    }
+    if (
+      (p.amountCents != null && p.amountCents !== order.totalCents) ||
+      (p.currency && p.currency.toUpperCase() !== order.currency.toUpperCase())
+    ) {
+      this.logger.error(`Order ${orderId}: paid ${p.amountCents} ${p.currency} but expected ${order.totalCents} ${order.currency}`);
+      return 'amount_mismatch';
+    }
+    await this.markPaid(orderId, p.paymentId, p.provider, p.checkoutId);
+    return 'order_paid';
+  }
+
+  async markPaymentFailed(orderId: string, status: 'FAILED' | 'CANCELLED') {
+    return prisma.order.updateMany({
+      where: { id: orderId, status: OrderStatus.PENDING_PAYMENT },
+      data: { status },
+    });
+  }
+
+  async markPaid(orderId: string, providerPaymentId: string, provider = 'stub', providerCheckoutId?: string) {
     const existing = await prisma.order.findUnique({ where: { id: orderId } });
     if (!existing) throw new NotFoundException('Order not found');
     // Do not regress SHIPPED/DELIVERED/etc. back to PAID (idempotent for already-paid).
@@ -113,7 +162,9 @@ export class OrdersService {
       where: { id: orderId },
       data: {
         status: OrderStatus.PAID,
-        squarePaymentId,
+        provider,
+        providerPaymentId,
+        ...(providerCheckoutId ? { providerCheckoutId } : {}),
       },
     });
 

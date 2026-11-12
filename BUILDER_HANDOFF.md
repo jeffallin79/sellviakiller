@@ -4,7 +4,7 @@
 **For:** Builder  
 **Status:** Jeff locked own-storefront blueprint — implement Phase 0 MVP  
 **Working name:** StoreForge (rename later if Jeff picks another)  
-**Payment change (2026-09-18):** Jeff mandated **Square, not Stripe**. Do not implement Stripe.
+**Payment change (2026-09-18):** Jeff mandated Square. **Superseded 2026-11-12:** StoreForge now uses **Stripe** — see PHASE1_BLUEPRINT.md "Payments switch".
 
 ## Goal
 Full-stack Sellvia competitor: turnkey multi-tenant ecommerce for dropshippers/digital sellers. Beat Sellvia on clear pricing, modern stack (not WordPress lock-in), honest fulfillment ETAs, exportable merchant data, and research baked into the dashboard.

@@ -6,7 +6,9 @@
     "build": "nest build",
     "dev": "nest start --watch",
     "start": "node dist/main.js",
-    "lint": "echo ok"
+    "lint": "echo ok",
+    "test": "node scripts-test.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.15",
@@ -24,7 +26,7 @@
     "ioredis": "^5.4.2",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "square": "^39.1.0",
+    "stripe": "^23.1.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
@@ -33,6 +35,7 @@
     "@types/cookie-parser": "^1.4.8",
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }
 }

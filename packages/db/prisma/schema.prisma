@@ -106,9 +106,20 @@ model Organization {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  /// Platform-side billing customer (Stripe `cus_…`): SaaS plan + Ad Fuel top-ups
+  billingCustomerId      String?  @unique
+  /// Merchant payout account (Stripe Connect Express `acct_…`), one per merchant
+  payoutProvider         String?
+  payoutAccountId        String?  @unique
+  payoutChargesEnabled   Boolean  @default(false)
+  payoutPayoutsEnabled   Boolean  @default(false)
+  payoutDetailsSubmitted Boolean  @default(false)
+  payoutUpdatedAt        DateTime?
+
   members      OrganizationMember[]
   stores       Store[]
   subscription Subscription?
+  adWallet     AdWallet?
 }
 
 model OrganizationMember {
@@ -131,7 +142,8 @@ model Plan {
   priceUsd           Int
   maxStores          Int
   maxOrdersPerMonth  Int
-  squareCatalogId    String?
+  /// Provider price id (Stripe `price_…`); env STRIPE_PRICE_* overrides at runtime
+  providerPriceId    String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -143,8 +155,9 @@ model Subscription {
   organizationId       String             @unique
   planId               String
   status               SubscriptionStatus @default(INCOMPLETE)
-  squareSubscriptionId String?
-  squareCustomerId     String?
+  provider               String             @default("stub") // stub | stripe
+  providerSubscriptionId String?            @unique
+  providerCustomerId     String?
   currentPeriodEnd     DateTime?
   cancelAtPeriodEnd    Boolean            @default(false)
   createdAt            DateTime           @default(now())
@@ -272,8 +285,13 @@ model Order {
   shippingCents      Int         @default(0)
   totalCents         Int
   platformFeeCents   Int         @default(0)
-  squarePaymentId    String?
-  squareOrderId      String?
+  provider           String      @default("stub") // stub | stripe
+  /// Stripe PaymentIntent id (`pi_…`) once paid
+  providerPaymentId  String?     @unique
+  /// Stripe Checkout Session id (`cs_…`)
+  providerCheckoutId String?     @unique
+  /// Connected account the charge was routed to (destination charge)
+  payoutAccountId    String?
   createdAt          DateTime    @default(now())
   updatedAt          DateTime    @updatedAt
 
@@ -342,4 +360,68 @@ model DepositBalance {
   currency  String   @default("USD")
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
+}
+
+/// Processed payment-provider webhook events (replay protection, keyed on provider event id)
+model WebhookEvent {
+  id          String    @id // provider event id, e.g. evt_…
+  provider    String
+  endpoint    String    // platform | connect
+  type        String
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+  attempts    Int       @default(1)
+  lastError   String?
+
+  @@index([type])
+}
+
+enum WalletTxnKind {
+  TOPUP
+  SPEND
+  FEE
+  REFUND
+  BONUS
+  ADJUST
+}
+
+/// Ad Fuel wallet (prepaid promotion credit). Phase 1 slice 3 builds the UI/jobs on top.
+model AdWallet {
+  id              String   @id @default(cuid())
+  organizationId  String   @unique
+  balanceCents    Int      @default(0) // refundable fuel
+  bonusCents      Int      @default(0) // promo fuel, never refundable
+  autoReloadCents Int      @default(0)
+  thresholdCents  Int      @default(0)
+  currency        String   @default("USD")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  txns         WalletTxn[]
+}
+
+model WalletTxn {
+  id                String        @id @default(cuid())
+  walletId          String
+  kind              WalletTxnKind
+  /// Signed: credits > 0, debits < 0
+  amountCents       Int
+  provider          String        @default("stub")
+  /// PaymentIntent id for TOPUP; unique per kind so a replayed webhook can't double-credit
+  providerPaymentId String?
+  /// Refund id for REFUND / reversal ADJUST
+  providerRefundId  String?
+  /// For REFUND: the TOPUP txn being refunded
+  refundOfId        String?
+  status            String        @default("succeeded") // pending | succeeded | failed
+  campaignId        String?
+  day               DateTime?
+  createdAt         DateTime      @default(now())
+
+  wallet AdWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@unique([kind, providerPaymentId])
+  @@unique([kind, providerRefundId])
+  @@index([walletId])
 }

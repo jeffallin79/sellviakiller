@@ -14,6 +14,7 @@ import { OrdersService } from './orders.service';
 import { AuthGuard } from '../common/auth.guard';
 import { CurrentUser } from '../common/current-user';
 import { AuthService } from '../auth/auth.service';
+import { isStubPayments } from '../payments';
 
 @ApiTags('orders')
 @Controller()
@@ -47,7 +48,7 @@ export class OrdersController {
   /**
    * Local/demo only. Requires ALLOW_STUB_PAY=true and merchant auth.
    * Without the flag (including production), returns 404.
-   * Checkout stub (no Square) still marks new orders PAID without this endpoint.
+   * Checkout stub (no Stripe keys) still marks new orders PAID without this endpoint.
    */
   @Post('orders/:id/stub-pay')
   @UseGuards(AuthGuard)
@@ -56,11 +57,11 @@ export class OrdersController {
     if (process.env.ALLOW_STUB_PAY !== 'true') {
       throw new NotFoundException();
     }
-    if (process.env.SQUARE_ACCESS_TOKEN) {
-      throw new ForbiddenException('Stub pay disabled when Square is configured');
+    if (!isStubPayments()) {
+      throw new ForbiddenException('Stub pay disabled when Stripe is configured');
     }
     const accountId = await this.authService.requireAccountId(user.id);
     await this.orders.getForAccount(accountId, id);
-    return this.orders.markPaid(id, `stub_manual_${Date.now()}`);
+    return this.orders.markPaid(id, `stub_manual_${Date.now()}`, 'stub');
   }
 }

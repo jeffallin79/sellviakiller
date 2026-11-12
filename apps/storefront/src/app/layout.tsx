@@ -3,7 +3,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'StoreForge Storefront',
-  description: 'Customer storefront — Square checkout',
+  description: 'Customer storefront',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

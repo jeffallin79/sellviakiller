@@ -13,13 +13,13 @@ function CompleteInner() {
       <h1>Thank you</h1>
       {stubPaid && (
         <p className="stub-badge" role="status">
-          STUB / SANDBOX PAYMENT — no Square charge was made
+          STUB / SANDBOX PAYMENT — no card was charged
         </p>
       )}
       <p className="muted">
         {stubPaid
-          ? 'Demo checkout completed without Square. Your order will appear in the merchant admin.'
-          : 'Payment received (Square). Your order will appear in the merchant admin. Tracking updates when the supplier confirms shipment.'}
+          ? 'Demo checkout completed without a real payment. Your order will appear in the merchant admin.'
+          : 'Thanks — your payment is being confirmed. Your order will appear in the merchant admin. Tracking updates when the supplier confirms shipment.'}
       </p>
       {orderId && (
         <p className="muted" style={{ marginTop: 8 }}>

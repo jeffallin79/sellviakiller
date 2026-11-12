@@ -34,6 +34,14 @@ export class BillingController {
     return this.billing.subscribe(accountId, user.email, planId as PlanId);
   }
 
+  /** Stripe Customer Portal: change plan, update card, cancel. */
+  @Post('portal')
+  @UseGuards(AuthGuard)
+  async portal(@CurrentUser() user: { id: string }) {
+    const accountId = await this.authService.requireAccountId(user.id);
+    return this.billing.portal(accountId);
+  }
+
   @Get('subscription')
   @UseGuards(AuthGuard)
   async subscription(@CurrentUser() user: { id: string }) {

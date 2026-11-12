@@ -7,6 +7,7 @@ import {
 import { prisma, StoreStatus } from '@storeforge/db';
 import type { CreateStoreInput } from '@storeforge/shared';
 import { PLANS } from '@storeforge/shared';
+import { isStubPayments } from '../payments';
 
 @Injectable()
 export class StoresService {
@@ -20,7 +21,7 @@ export class StoresService {
     });
 
     if (!organization.subscription || organization.subscription.status !== 'ACTIVE') {
-      if (!process.env.SQUARE_ACCESS_TOKEN) {
+      if (isStubPayments()) {
         await prisma.subscription.upsert({
           where: { organizationId },
           update: { status: 'ACTIVE', planId: 'starter' },
@@ -28,11 +29,12 @@ export class StoresService {
             organizationId,
             planId: 'starter',
             status: 'ACTIVE',
+            provider: 'stub',
             currentPeriodEnd: new Date(Date.now() + 30 * 86400000),
           },
         });
       } else {
-        throw new BadRequestException('Active Square subscription required');
+        throw new BadRequestException('Active subscription required — pick a plan in Billing');
       }
     }
 

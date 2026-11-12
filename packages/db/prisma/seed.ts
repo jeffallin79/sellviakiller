@@ -51,8 +51,8 @@ async function main() {
         priceUsd: plan.priceUsd,
         maxStores: plan.maxStores,
         maxOrdersPerMonth: plan.maxOrdersPerMonth,
-        squareCatalogId:
-          process.env[`SQUARE_PLAN_${plan.id.toUpperCase()}_ID`] || null,
+        providerPriceId:
+          process.env[`STRIPE_PRICE_${plan.id.toUpperCase()}`] || null,
       },
     });
   }

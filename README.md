@@ -1,9 +1,9 @@
-# StoreForge — Phase 0 MVP
+# StoreForge
 
 Turnkey multi-tenant dropshipping ecommerce (Sellvia competitor).  
-**Payments: Square only** (no Stripe).
+**Payments: Stripe** (switched from Square on 2026-11-12 — Billing for plans, Connect Express for merchant payouts, PaymentIntents for Ad Fuel). Stub mode until keys exist.
 
-Authoritative brief: [`BUILDER_HANDOFF.md`](./BUILDER_HANDOFF.md).
+Authoritative briefs: [`PHASE1_BLUEPRINT.md`](./PHASE1_BLUEPRINT.md) (current), [`BUILDER_HANDOFF.md`](./BUILDER_HANDOFF.md) (Phase 0).
 
 ## Stack
 
@@ -16,7 +16,7 @@ Authoritative brief: [`BUILDER_HANDOFF.md`](./BUILDER_HANDOFF.md).
 | `packages/shared` | Zod schemas + types + supplier interface |
 | Jobs | Redis + BullMQ (inline fallback if Redis down) |
 | Auth | Better Auth (email/password) |
-| Payments | Square Checkout + SaaS subscriptions |
+| Payments | Stripe (`apps/api/src/payments`: `PaymentProvider` interface, Stripe + stub impls) |
 
 ## Quick start
 
@@ -30,7 +30,7 @@ pnpm install
 
 # 3) DB
 pnpm db:generate
-pnpm db:push                  # or: pnpm db:migrate
+pnpm db:deploy                # apply prisma/migrations
 pnpm db:seed                  # plans + suppliers + ~300 fixture SKUs
 
 # 4) Run (three terminals, or turbo)
@@ -52,10 +52,10 @@ Path fallback works without hosts: `http://localhost:3000/s/demo`.
 ## Demo path (no API keys)
 
 1. Admin http://localhost:3001/signup — create merchant
-2. Billing → Subscribe **Starter $29** (stub activates without `SQUARE_*`)
+2. Billing → Subscribe **Starter $29** (stub activates without `STRIPE_SECRET_KEY`)
 3. Stores → create slug `demo`
 4. Catalog → select products → **1-click import**
-5. Storefront http://localhost:3000/s/demo → add to cart → Pay with Square (stub marks PAID)
+5. Storefront http://localhost:3000/s/demo → add to cart → checkout (stub marks PAID)
 6. Admin Orders → Approve fulfillment → CJ stub returns tracking
 7. Export CSV: `/api/export/products.csv` and `/api/export/orders.csv`
 
@@ -66,7 +66,7 @@ Soft-delete stores from Stores page — **never hard-deletes** on cancel.
 | Env | Required for | Without it |
 | --- | --- | --- |
 | `DATABASE_URL` / `REDIS_URL` | Boot | Apps won't persist / jobs inline |
-| `SQUARE_ACCESS_TOKEN`, `SQUARE_APPLICATION_ID`, `SQUARE_LOCATION_ID`, `SQUARE_WEBHOOK_SIGNATURE_KEY`, `SQUARE_PLAN_*_ID` | Live SaaS sub + checkout + webhooks | **Stub mode** — local ACTIVE sub + instant PAID checkout |
+| `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_CONNECT_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER/GROWTH/SCALE` | Stripe Billing, Connect checkout, Ad Fuel, webhooks | **Stub mode** — local ACTIVE sub, instant payout account, instant PAID checkout, instant fuel credit |
 | `CJ_API_KEY` (+ email/password) | Live CJ catalog sync / fulfill | **Fixtures** via `pnpm db:seed` (`USE_CATALOG_FIXTURES=true`). Spocket/Zendrop stay stubs. |
 | `BETTER_AUTH_SECRET` | Auth cookies | Dev default (change before deploy) |
 
@@ -77,11 +77,11 @@ Set `USE_CATALOG_FIXTURES=false` and `CJ_API_KEY=…` when Jeff provides CJ cred
 | # | Criterion | Status |
 | --- | --- | --- |
 | 1 | Merchant sign up / sign in | Works (Better Auth) |
-| 2 | Subscribe via Square Starter | Stub OK / live when keys set + webhook `/api/webhooks/square` |
+| 2 | Subscribe (Starter) | Stub OK / Stripe Checkout + webhook `/api/webhooks/stripe` |
 | 3 | Provision one store `{slug}.storeforge.local` | Works |
 | 4 | Seed 200–500 SKUs | Fixtures (~300); CJ live when keyed |
 | 5 | 1-click import catalog → store | Works |
-| 6 | Customer Square checkout | Stub OK / Payment Links when keyed |
+| 6 | Customer checkout | Stub OK / Stripe Checkout destination charge to merchant's Express account |
 | 7 | Order in merchant admin | Works |
 | 8 | Fulfill approve/auto → SupplierAdapter | CJ impl (stub fulfill without keys); Spocket/Zendrop stubs |
 | 9 | Order list + status + tracking | Works |
@@ -97,7 +97,9 @@ Research scores, abandoned cart, custom domains, ads, academy, digital products,
 pnpm docker:up | docker:down
 pnpm db:generate | db:push | db:seed
 pnpm dev | build
-./scripts/demo-flow.sh   # API smoke only (bootstrap + health) — not full E2E
+./scripts/demo-flow.sh   # API smoke only (bootstrap + health)
+node scripts/e2e-smoke.mjs   # full HTTP path: signup → plan → payouts → store → import → checkout → fulfil → Ad Fuel → export
+pnpm test                # API tests (fresh schema in storeforge_test, migrations applied from scratch)
 ```
 
 `ALLOW_STUB_PAY=true` enables authenticated `POST /api/orders/:id/stub-pay` for local demos. Leave unset/false in production (endpoint returns 404).
@@ -120,3 +122,22 @@ Without Docker/Redis/`SQUARE_*`/`CJ_*`:
 
 Prefer `docker compose up -d` on Jeff's machine for Postgres+Redis.
 
+
+
+## Payments (Stripe) — Phase 1 step 0
+
+| Flow | How |
+| --- | --- |
+| SaaS plans | `POST /api/billing/subscribe` → Stripe Checkout (subscription). Row turns ACTIVE only from verified webhooks; `POST /api/billing/portal` → Customer Portal |
+| Merchant payouts | `POST /api/payouts/onboard` → Express account (one per merchant) + Account Link; `GET /api/payouts/status` |
+| Storefront checkout | Checkout Session, destination charge (`transfer_data.destination` + `on_behalf_of`), `application_fee_amount` only if `PLATFORM_FEE_BPS` > 0 (default 0) |
+| Ad Fuel | `POST /api/fuel/topups` → platform PaymentIntent (`setup_future_usage=off_session`); credited from `payment_intent.succeeded`; `POST /api/fuel/refunds` (unspent, ≤90 days) |
+| Webhooks | `POST /api/webhooks/stripe` (platform, `STRIPE_WEBHOOK_SECRET`) and `/api/webhooks/stripe/connect` (`STRIPE_CONNECT_WEBHOOK_SECRET`). Signature required; event id dedupe in `WebhookEvent`; every handler idempotent; subscriptions re-read from Stripe so order/replays don't matter; live events ignored by a test-key server |
+
+Platform webhook events: `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, `customer.subscription.created/updated/deleted/paused/resumed`, `invoice.paid`, `invoice.payment_failed`, `payment_intent.succeeded`, `refund.created/updated/failed`, `charge.dispute.created`. Connect endpoint: `account.updated`.
+
+Live keys (`sk_live_`) are refused unless `STRIPE_ALLOW_LIVE=true`.
+
+**Existing dev DB created with `db push` (Phase 0)?** Mark the baseline as applied, then deploy:
+`cd packages/db && npx prisma migrate resolve --applied 20260918000000_phase0_baseline && npx prisma migrate deploy`.
+The second migration renames the Square columns (data kept, rows tagged `provider='square'`).

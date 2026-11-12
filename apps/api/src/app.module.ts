@@ -6,7 +6,7 @@ import { CatalogModule } from './catalog/catalog.module';
 import { OrdersModule } from './orders/orders.module';
 import { FulfillmentModule } from './fulfillment/fulfillment.module';
 import { BillingModule } from './billing/billing.module';
-import { WebhooksModule } from './webhooks/webhooks.module';
+import { PaymentsModule } from './payments/payments.module';
 import { SuppliersModule } from './suppliers/suppliers.module';
 import { ExportModule } from './export/export.module';
 import { JobsModule } from './jobs/jobs.module';
@@ -21,7 +21,7 @@ import { HealthController } from './health.controller';
     OrdersModule,
     FulfillmentModule,
     BillingModule,
-    WebhooksModule,
+    PaymentsModule,
     SuppliersModule,
     ExportModule,
     JobsModule,
