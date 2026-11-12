@@ -15,7 +15,7 @@ export class EmailController {
   @Get()
   async list(@CurrentUser() user: { id: string }, @Query('storeId') storeId?: string, @Query('orderId') orderId?: string) {
     const items = await this.emails.list(await this.auth.requireAccountId(user.id), { storeId, orderId });
-    return { transport: getEmailTransport().kind, items };
+    return { transport: getEmailTransport().kind, fromAddress: process.env.EMAIL_FROM_ADDRESS ?? 'orders@storeforge.local', items };
   }
 
   @Get(':id')
@@ -26,7 +26,7 @@ export class EmailController {
   /** Rendered HTML for the admin preview iframe (sandboxed there). */
   @Get(':id/html')
   @Header('Content-Type', 'text/html; charset=utf-8')
-  @Header('Content-Security-Policy', "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; frame-ancestors *")
+  @Header('Content-Security-Policy', "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; frame-ancestors 'none'")
   async html(@CurrentUser() user: { id: string }, @Param('id') id: string) {
     return (await this.emails.get(await this.auth.requireAccountId(user.id), id)).html;
   }

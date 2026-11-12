@@ -9,6 +9,7 @@ import {
   RocketLaunch, Books, Truck, Megaphone, GasPump, Storefront, Receipt, Bank, SignOut, Sun, Moon,
   CheckCircle, Circle, ArrowRight, ArrowLeft, ShoppingBag, Plus, Minus, Clock, MapPin, ShieldCheck,
   DownloadSimple, ArrowsClockwise, Trash, Warning, Info, X, Package, Coins, Sparkle, Tote, Seal, ListChecks, Wallet,
+  Globe, EnvelopeSimple, Copy, ArrowCounterClockwise,
 } from '@phosphor-icons/react/dist/ssr';
 
 export const icons = {
@@ -46,6 +47,10 @@ export const icons = {
   spark: Sparkle,
   seal: Seal,
   tasks: ListChecks,
+  domains: Globe,
+  email: EnvelopeSimple,
+  copy: Copy,
+  refund: ArrowCounterClockwise,
 } as const;
 
 export type IconName = keyof typeof icons;

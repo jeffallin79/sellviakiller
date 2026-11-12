@@ -10,11 +10,13 @@ const NAV: { href: string; label: string; icon: IconName; soon?: boolean }[] = [
   { href: '/launchpad', label: 'Launchpad', icon: 'launchpad' },
   { href: '/shelf', label: 'Shelf', icon: 'shelf' },
   { href: '/dispatch', label: 'Dispatch', icon: 'dispatch' },
+  { href: '/emails', label: 'Emails', icon: 'email' },
   { href: '/boost', label: 'Boost', icon: 'boost', soon: true },
   { href: '/fuel', label: 'Ad Fuel', icon: 'fuel' },
 ];
 const MORE: { href: string; label: string; icon: IconName }[] = [
   { href: '/stores', label: 'Stores', icon: 'stores' },
+  { href: '/domains', label: 'Domains', icon: 'domains' },
   { href: '/billing', label: 'Billing', icon: 'billing' },
 ];
 

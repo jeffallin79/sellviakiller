@@ -53,7 +53,7 @@ export default function StoresPage() {
           <div className="sf-field">
             <label className="sf-label" htmlFor="slug">Web address</label>
             <input id="slug" className="sf-input sf-mono" value={slug} onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} placeholder="juniper" required pattern="[a-z0-9-]{2,}" />
-            <span className="sf-hint">Your store will live at <span className="sf-mono">{slug || 'name'}.{ROOT}</span>. Custom domains arrive in the next update.</span>
+            <span className="sf-hint">Your store will live at <span className="sf-mono">{slug || 'name'}.{ROOT}</span>. You can connect your own domain after.</span>
           </div>
           <button className="sf-btn sf-btn--brand" type="submit"><Icon name="stores" size={18} />Open store</button>
           {msg && <Callout tone="ok">{msg}</Callout>}
@@ -71,9 +71,11 @@ export default function StoresPage() {
             <article key={s.id} className="sf-card store">
               <div className="sf-spread"><h3 style={{ margin: 0 }}>{s.name}</h3><StatusBadge status={s.status} /></div>
               {s.riskFlag?.startsWith('open_disputes') && <Callout tone="bad">{s.riskFlag.split(':')[1]} open card dispute{s.riskFlag.split(':')[1] === '1' ? '' : 's'}. Respond in the Stripe Dashboard before the due date.</Callout>}
+              {s.customDomain && <a className="store__url" href={`https://${s.customDomain}`} target="_blank" rel="noreferrer">{s.customDomain}</a>}
               <a className="store__url" href={`${SHOP}/s/${s.slug}`} target="_blank" rel="noreferrer">{s.slug}.{ROOT}</a>
               <div className="sf-row">
                 <a className="sf-btn sf-btn--sm" href={`${SHOP}/s/${s.slug}`} target="_blank" rel="noreferrer"><Icon name="next" size={16} />Visit store</a>
+                <a className="sf-btn sf-btn--sm" href={`/domains?store=${s.slug}`}><Icon name="domains" size={16} />{s.customDomain ? 'Domains' : 'Connect a domain'}</a>
                 <button className="sf-btn sf-btn--sm sf-btn--quiet" onClick={() => archive(s.id, s.name)}><Icon name="trash" size={16} />Archive</button>
               </div>
             </article>

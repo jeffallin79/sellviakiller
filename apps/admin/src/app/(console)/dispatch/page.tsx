@@ -11,6 +11,7 @@ const FLAG: Record<string, string> = {
   payment_mismatch: 'Payment needs review',
   dispute_open: 'Card dispute open',
   dispute_lost: 'Dispute lost',
+  refund_failed: 'Refund failed',
 };
 
 export default function DispatchPage() {
@@ -26,9 +27,23 @@ export default function DispatchPage() {
     setError(''); setMsg('');
     try {
       await api(`/fulfillment/orders/${orderId}/approve`, { method: 'POST' });
-      setMsg(`Order #${orderId.slice(-6).toUpperCase()} sent to the supplier.`);
+      setMsg(`Order #${orderId.slice(-8).toUpperCase()} sent to the supplier.`);
       refresh();
     } catch (e) { setError(e instanceof Error ? e.message : 'Could not send to supplier'); }
+  }
+
+  async function refund(o: any) {
+    const left = o.totalCents - (o.refundedCents ?? 0);
+    const input = window.prompt(`Refund how much to ${o.customerName}? Up to $${(left / 100).toFixed(2)}. The customer gets an email when it goes through.`, (left / 100).toFixed(2));
+    if (input == null) return;
+    const cents = Math.round(Number(input.replace(/[^0-9.]/g, '')) * 100);
+    if (!Number.isFinite(cents) || cents <= 0 || cents > left) { setError(`Enter an amount between $0.01 and $${(left / 100).toFixed(2)}.`); return; }
+    setError(''); setMsg('');
+    try {
+      const r = await api<any>(`/orders/${o.id}/refunds`, { method: 'POST', body: JSON.stringify({ amountCents: cents, requestId: crypto.randomUUID() }) });
+      setMsg(r.status === 'succeeded' ? `Refunded $${(cents / 100).toFixed(2)} on order #${o.id.slice(-8).toUpperCase()}. The customer has been emailed.` : `Refund of $${(cents / 100).toFixed(2)} sent to Stripe. We'll email the customer when it completes.`);
+      refresh();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Refund failed'); }
   }
 
   if (authError) return <SignInNeeded error={authError} />;
@@ -53,7 +68,7 @@ export default function DispatchPage() {
       {flagged.length > 0 && (
         <Callout tone="bad" title={`${flagged.length} order${flagged.length === 1 ? ' needs' : 's need'} attention`}>
           {flagged.map((o) => (
-            <div key={o.id}><span className="sf-mono">#{o.id.slice(-6).toUpperCase()}</span> · {FLAG[o.flag] ?? o.flag}{o.flagDetail ? <span className="sf-muted"> — {o.flagDetail}</span> : null}</div>
+            <div key={o.id}><span className="sf-mono">#{o.id.slice(-8).toUpperCase()}</span> · {FLAG[o.flag] ?? o.flag}{o.flagDetail ? <span className="sf-muted"> — {o.flagDetail}</span> : null}</div>
           ))}
         </Callout>
       )}
@@ -73,19 +88,25 @@ export default function DispatchPage() {
               <tbody>
                 {list.map((o) => (
                   <tr key={o.id}>
-                    <td className="sf-mono">#{o.id.slice(-6).toUpperCase()}</td>
+                    <td className="sf-mono">#{o.id.slice(-8).toUpperCase()}</td>
                     <td className="sf-mono sf-muted">{new Date(o.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td>
                     <td>{o.store?.name ?? o.store?.slug}</td>
                     <td>{o.customerName}<br /><span className="sf-muted" style={{ fontSize: '0.8rem' }}>{o.customerEmail}</span></td>
-                    <td className="sf-num"><Money cents={o.totalCents} /></td>
+                    <td className="sf-num"><Money cents={o.totalCents} />{o.refundedCents > 0 && o.status !== 'REFUNDED' && <><br /><span className="sf-muted" style={{ fontSize: '0.8rem' }}>−<Money cents={o.refundedCents} /> refunded</span></>}</td>
                     <td><StatusBadge status={o.status} />{o.flag && <><br /><Badge tone="bad">{FLAG[o.flag] ?? o.flag}</Badge></>}</td>
                     <td className="sf-mono" style={{ fontSize: '0.82rem' }}>
                       {o.fulfillment?.trackingNumber ? <>{o.fulfillment.carrier}<br />{o.fulfillment.trackingNumber}</> : <span className="sf-muted">—</span>}
                     </td>
                     <td>
-                      {o.status === 'AWAITING_MERCHANT_APPROVAL' && (
-                        <button className="sf-btn sf-btn--sm sf-btn--brand" onClick={() => approve(o.id)}><Icon name="dispatch" size={16} />Send to supplier</button>
-                      )}
+                      <div className="sf-row" style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                        {o.status === 'AWAITING_MERCHANT_APPROVAL' && (
+                          <button className="sf-btn sf-btn--sm sf-btn--brand" onClick={() => approve(o.id)}><Icon name="dispatch" size={16} />Send to supplier</button>
+                        )}
+                        {['PAID', 'AWAITING_MERCHANT_APPROVAL', 'FULFILLMENT_SUBMITTED', 'SHIPPED', 'DELIVERED'].includes(o.status) && o.totalCents > (o.refundedCents ?? 0) && (
+                          <button className="sf-btn sf-btn--sm sf-btn--quiet" onClick={() => refund(o)}><Icon name="refund" size={16} />Refund</button>
+                        )}
+                        {o.status !== 'PENDING_PAYMENT' && <a className="sf-btn sf-btn--sm sf-btn--quiet" href={`/emails?orderId=${o.id}`} aria-label={`Emails for order ${o.id.slice(-8).toUpperCase()}`}><Icon name="email" size={16} />Emails</a>}
+                      </div>
                     </td>
                   </tr>
                 ))}
