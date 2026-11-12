@@ -19,6 +19,7 @@ export default function LaunchpadPage() {
   const [shelfCount, setShelfCount] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [alerts, setAlerts] = useState<any[]>([]);
 
   useEffect(() => {
     api<any>('/me')
@@ -32,6 +33,7 @@ export default function LaunchpadPage() {
     api<any[]>('/orders').then(setOrders).catch(() => setOrders([]));
     api<any>('/payouts/status').then(setPayouts).catch(() => setPayouts(null));
     api<any>('/fuel').then(setFuel).catch(() => setFuel(null));
+    api<any[]>('/notifications').then((n) => setAlerts(n.filter((x) => !x.readAt))).catch(() => setAlerts([]));
     const q = new URLSearchParams(window.location.search);
     if (q.get('payouts') === 'return') setNotice('Thanks — Stripe is checking your payout details. This page updates when they confirm.');
   }, []);
@@ -90,6 +92,16 @@ export default function LaunchpadPage() {
         actions={<Link className="sf-btn sf-btn--brand" href="/shelf"><Icon name="add" size={18} />Add products</Link>}
       />
       {notice && <Callout tone="info">{notice}</Callout>}
+      {alerts.map((a) => (
+        <Callout
+          key={a.id}
+          tone={a.severity === 'critical' ? 'bad' : a.severity === 'warning' ? 'warn' : 'info'}
+          title={a.title}
+          action={<button className="sf-btn sf-btn--sm sf-btn--quiet" onClick={() => { api(`/notifications/${a.id}/read`, { method: 'POST' }).catch(() => null); setAlerts((xs) => xs.filter((x) => x.id !== a.id)); }}>Got it</button>}
+        >
+          {a.body}{a.orderId ? <> <Link href="/dispatch">Open Dispatch</Link></> : null}
+        </Callout>
+      ))}
 
       <div className="grid-2">
         <section className="sf-card sf-card--ticket" aria-labelledby="rev">

@@ -36,12 +36,13 @@ export function Badge({ tone = 'neutral', children }: { tone?: 'neutral' | 'mone
   return <span className={`sf-badge sf-badge--${tone}`}>{children}</span>;
 }
 
-export function Callout({ tone = 'info', children }: { tone?: 'ok' | 'bad' | 'warn' | 'info'; children: ReactNode }) {
+export function Callout({ tone = 'info', title, action, children }: { tone?: 'ok' | 'bad' | 'warn' | 'info'; title?: ReactNode; action?: ReactNode; children: ReactNode }) {
   const icon: IconName = tone === 'ok' ? 'done' : tone === 'bad' ? 'warning' : tone === 'warn' ? 'warning' : 'info';
   return (
     <div className={`sf-callout sf-callout--${tone}`} role={tone === 'bad' ? 'alert' : 'status'}>
       <Icon name={icon} size={20} />
-      <span>{children}</span>
+      <span style={{ flex: 1 }}>{title && <strong style={{ display: 'block', marginBottom: 2 }}>{title}</strong>}{children}</span>
+      {action}
     </div>
   );
 }

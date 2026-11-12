@@ -70,6 +70,7 @@ export default function StoresPage() {
           {stores?.map((s) => (
             <article key={s.id} className="sf-card store">
               <div className="sf-spread"><h3 style={{ margin: 0 }}>{s.name}</h3><StatusBadge status={s.status} /></div>
+              {s.riskFlag?.startsWith('open_disputes') && <Callout tone="bad">{s.riskFlag.split(':')[1]} open card dispute{s.riskFlag.split(':')[1] === '1' ? '' : 's'}. Respond in the Stripe Dashboard before the due date.</Callout>}
               <a className="store__url" href={`${SHOP}/s/${s.slug}`} target="_blank" rel="noreferrer">{s.slug}.{ROOT}</a>
               <div className="sf-row">
                 <a className="sf-btn sf-btn--sm" href={`${SHOP}/s/${s.slug}`} target="_blank" rel="noreferrer"><Icon name="next" size={16} />Visit store</a>

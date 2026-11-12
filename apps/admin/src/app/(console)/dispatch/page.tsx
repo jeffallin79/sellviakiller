@@ -5,7 +5,13 @@ import { api, API_URL } from '@/lib/api';
 import { PageHead } from '@/components/PageHead';
 import { SignInNeeded } from '@/components/SignInNeeded';
 import { Icon } from '@storeforge/ui/icons';
-import { Callout, Money, StatusBadge } from '@storeforge/ui/components';
+import { Badge, Callout, Money, StatusBadge } from '@storeforge/ui/components';
+
+const FLAG: Record<string, string> = {
+  payment_mismatch: 'Payment needs review',
+  dispute_open: 'Card dispute open',
+  dispute_lost: 'Dispute lost',
+};
 
 export default function DispatchPage() {
   const [orders, setOrders] = useState<any[] | null>(null);
@@ -28,6 +34,7 @@ export default function DispatchPage() {
   if (authError) return <SignInNeeded error={authError} />;
   const list = orders ?? [];
   const count = (s: string[]) => list.filter((o) => s.includes(o.status)).length;
+  const flagged = list.filter((o) => o.flag);
 
   return (
     <>
@@ -43,6 +50,13 @@ export default function DispatchPage() {
         <div className="lane"><StatusBadge status="FULFILLMENT_SUBMITTED" /><span className="sf-num">{count(['FULFILLMENT_SUBMITTED', 'PAID'])}</span></div>
         <div className="lane"><StatusBadge status="SHIPPED" /><span className="sf-num">{count(['SHIPPED', 'DELIVERED'])}</span></div>
       </div>
+      {flagged.length > 0 && (
+        <Callout tone="bad" title={`${flagged.length} order${flagged.length === 1 ? ' needs' : 's need'} attention`}>
+          {flagged.map((o) => (
+            <div key={o.id}><span className="sf-mono">#{o.id.slice(-6).toUpperCase()}</span> · {FLAG[o.flag] ?? o.flag}{o.flagDetail ? <span className="sf-muted"> — {o.flagDetail}</span> : null}</div>
+          ))}
+        </Callout>
+      )}
       {msg && <Callout tone="ok">{msg}</Callout>}
       {error && <Callout tone="bad">{error}</Callout>}
       <div className="sf-card sf-card--flush">
@@ -64,7 +78,7 @@ export default function DispatchPage() {
                     <td>{o.store?.name ?? o.store?.slug}</td>
                     <td>{o.customerName}<br /><span className="sf-muted" style={{ fontSize: '0.8rem' }}>{o.customerEmail}</span></td>
                     <td className="sf-num"><Money cents={o.totalCents} /></td>
-                    <td><StatusBadge status={o.status} /></td>
+                    <td><StatusBadge status={o.status} />{o.flag && <><br /><Badge tone="bad">{FLAG[o.flag] ?? o.flag}</Badge></>}</td>
                     <td className="sf-mono" style={{ fontSize: '0.82rem' }}>
                       {o.fulfillment?.trackingNumber ? <>{o.fulfillment.carrier}<br />{o.fulfillment.trackingNumber}</> : <span className="sf-muted">—</span>}
                     </td>
