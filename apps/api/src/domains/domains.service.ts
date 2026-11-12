@@ -25,7 +25,7 @@ export function nextDnsCheckDelayMs(windowAgeMs: number): number {
 export const TLS_POLL_MS = 15_000;
 export const ACTIVE_RECHECK_MS = 12 * 3600_000;
 
-export type DnsRecordHint = { type: 'TXT' | 'CNAME' | 'A'; name: string; value: string; purpose: 'ownership' | 'routing'; ok: boolean | null; alternative?: boolean };
+export type DnsRecordHint = { type: 'TXT' | 'CNAME' | 'A' | 'ALIAS'; name: string; value: string; purpose: 'ownership' | 'routing'; ok: boolean | null; alternative?: boolean };
 export type CheckResult = { txt: boolean; routing: boolean; tls: 'issued' | 'pending' | 'failed' | null; seen: { txt: string[]; cname: string[]; a: string[] }; detail?: string };
 
 export type DomainView = Domain & {
@@ -61,7 +61,8 @@ export class DomainsService {
     if (apex) {
       const ips = apexIps();
       for (const ip of ips) records.push({ type: 'A', name: d.host, value: ip, purpose: 'routing', ok: last ? last.routing : null });
-      records.push({ type: 'CNAME', name: d.host, value: cnameTarget(), purpose: 'routing', ok: last ? last.routing : null, alternative: ips.length > 0 });
+      // Root domains can't hold a CNAME; ALIAS/ANAME/flattening (Cloudflare, DNSimple, Route 53 alias…) is the equivalent.
+      records.push({ type: 'ALIAS', name: d.host, value: cnameTarget(), purpose: 'routing', ok: last ? last.routing : null, alternative: ips.length > 0 });
     } else {
       records.push({ type: 'CNAME', name: d.host, value: cnameTarget(), purpose: 'routing', ok: last ? last.routing : null });
     }

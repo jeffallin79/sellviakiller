@@ -138,7 +138,7 @@ test('domain: apex uses A record (or ALIAS flattening to the target)', async () 
   const apex = `${uid('apex').toLowerCase().replace(/_/g, '')}.com`;
   const d = await svc.add(org.id, store.id, apex);
   assert.ok(d.apex);
-  assert.deepEqual(d.records.filter((r) => r.purpose === 'routing').map((r) => [r.type, r.value, !!r.alternative]), [['A', '203.0.113.10', false], ['CNAME', TARGET, true]]);
+  assert.deepEqual(d.records.filter((r) => r.purpose === 'routing').map((r) => [r.type, r.value, !!r.alternative]), [['A', '203.0.113.10', false], ['ALIAS', TARGET, true]]);
   dns.records.set(apex, { txt: [txtValue(d.verificationToken)], cname: [], a: ['203.0.113.10'] });
   assert.equal((await svc.check(d.id)).status, 'ISSUING_TLS');
 

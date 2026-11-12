@@ -41,13 +41,18 @@ function Copy({ text, label }: { text: string; label: string }) {
   return (
     <button
       type="button"
-      className="sf-btn sf-btn--sm sf-btn--quiet copybtn"
-      aria-label={`Copy ${label}`}
+      className="copybtn"
+      aria-label={done ? `${label} copied` : `Copy ${label}`}
+      title={done ? 'Copied' : 'Copy'}
       onClick={() => { navigator.clipboard?.writeText(text).catch(() => null); setDone(true); setTimeout(() => setDone(false), 1500); }}
     >
-      <Icon name={done ? 'done' : 'copy'} size={16} />{done ? 'Copied' : 'Copy'}
+      <Icon name={done ? 'done' : 'copy'} size={16} />
     </button>
   );
+}
+
+function CopyCell({ text, label }: { text: string; label: string }) {
+  return <span className="copycell"><span className="sf-mono recval">{text}</span><Copy text={text} label={label} /></span>;
 }
 
 function RecordState({ ok }: { ok: boolean | null }) {
@@ -66,10 +71,9 @@ function DomainCard({ d, onChange, busy, act }: { d: Domain; onChange: () => voi
   const row = (r: Rec, i: number) => (
     <tr key={`${r.type}-${r.name}-${r.value}-${i}`}>
       <td><Badge tone={r.purpose === 'ownership' ? 'info' : 'brand'}>{r.type}</Badge></td>
-      <td className="sf-mono recval">{r.name}</td>
-      <td className="sf-mono recval">{r.value}</td>
+      <td><CopyCell text={r.name} label={`${r.type} name`} /></td>
+      <td><CopyCell text={r.value} label={`${r.type} value`} /></td>
       <td><RecordState ok={r.ok} /></td>
-      <td className="sf-row" style={{ gap: 6, justifyContent: 'flex-end' }}><Copy text={r.name} label={`${r.type} name`} /><Copy text={r.value} label={`${r.type} value`} /></td>
     </tr>
   );
   return (
@@ -113,13 +117,16 @@ function DomainCard({ d, onChange, busy, act }: { d: Domain; onChange: () => voi
       {d.status !== 'ACTIVE' && (
         <div className="sf-table-wrap">
           <table className="sf-table rectable">
-            <thead><tr><th>Type</th><th>Name / host</th><th>Value</th><th>Status</th><th><span className="sf-sr-only">Copy</span></th></tr></thead>
+            <thead><tr><th>Type</th><th>Name / host</th><th>Value</th><th>Status</th></tr></thead>
             <tbody>{[...ownership, ...main].map(row)}</tbody>
           </table>
         </div>
       )}
       {d.status !== 'ACTIVE' && alt.length > 0 && (
-        <p className="sf-hint">Root domain: use the A record{main.length > 1 ? 's' : ''} above, or, if your DNS host supports ALIAS / ANAME / CNAME flattening (Cloudflare does), point <span className="sf-mono">{d.host}</span> at <span className="sf-mono">{alt[0].value}</span> instead.</p>
+        <p className="sf-hint">Root domain: use the A record{main.length > 1 ? 's' : ''} above, or, if your DNS host supports ALIAS / ANAME / CNAME flattening (Cloudflare does), an ALIAS from <span className="sf-mono">{d.host}</span> to <span className="sf-mono">{alt[0].value}</span> instead.</p>
+      )}
+      {d.status !== 'ACTIVE' && d.apex && alt.length === 0 && (
+        <p className="sf-hint">Root domains can&apos;t use a CNAME. Pick <strong>ALIAS</strong>, <strong>ANAME</strong> or CNAME flattening at your DNS host, or use <span className="sf-mono">www.</span>{d.host} instead.</p>
       )}
       {d.status !== 'ACTIVE' && <p className="sf-hint">Some DNS hosts add your domain automatically. If so, enter only the first part of the name, like <span className="sf-mono">{ownership[0]?.name.replace(new RegExp(`\\.${d.host.split('.').slice(-2).join('\\.')}$`), '')}</span>.</p>}
 

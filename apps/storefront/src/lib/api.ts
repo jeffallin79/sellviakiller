@@ -1,4 +1,6 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+// Browser: same-origin (proxied by next.config rewrites). Server: straight to the API.
+const API_URL =
+  typeof window === 'undefined' ? (process.env.STOREFRONT_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000').replace(/\/$/, '') : '';
 
 export async function api<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_URL}/api${path}`, {
