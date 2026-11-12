@@ -352,6 +352,51 @@ over one delivery simulator that honours budgets, review, pauses and **account s
 Once those exist, set the env vars (see `.env.example`), leave the `*_MODE` vars blank, restart the API, and run
 one store end-to-end with a small budget on each channel before turning on `ADS_MANAGED_CHANNELS` for everyone.
 
+## Phase 1 · Slice 5 — Product research + abandoned-bag recovery
+
+**Research** (admin → Research, API `/api/research/*`)
+- Every catalog product gets a `ProductScore` (0–100): **trend 35%** (search interest 65% + StoreForge
+  order velocity over 14 days 35%), **margin 30%** (net margin after card fees, ad cost (CPA) and ad fee, 0–35% → 0–100),
+  **room 20%** (100 − ad saturation from the Meta Ad Library), **shipping 15%** (ETA). Refreshed when older than
+  `RESEARCH_TTL_HOURS` (24); "Refresh" re-scores up to 100 products, 4 at a time (30 s throttle per account).
+- Sources: `SERPAPI_API_KEY` → Google Trends via SerpApi; `META_AD_LIBRARY_TOKEN` → Ad Library active-ad counts
+  (the API only covers EU/UK for non-political ads, so saturation is an EU/UK proxy). Without keys both run as
+  deterministic **sample data**, and the page and every draft say so.
+- Insight + 3 ad angles from `LLM_API_KEY` (OpenAI-compatible; `LLM_BASE_URL`, `LLM_MODEL`). Model output is
+  treated as untrusted text, capped and run through the ad policy scanner; blocked angles are dropped. No key →
+  template drafts, no network call.
+- Margin calculator (shared `marginCalc`, also `POST /api/research/margin`): price, cost, supplier shipping,
+  Stripe 2.9% + 30¢, `PLATFORM_FEE_BPS` (0), ad CPA and the Boost fee, 3% refund reserve → profit per order,
+  margin, break-even CPA/ROAS. "Add to store" imports at the chosen markup.
+
+**Abandoned-bag recovery** (storefront bag drawer, admin → Recovery, outbox kinds `CART_REMINDER_1/2`)
+- Opt-in only: an **unticked** box in the bag ("Email me a reminder about this bag…"). Nothing is stored without
+  it; the exact wording and time are kept as consent evidence. Unticking scrubs the email.
+- Two reminders at most: `CART_REMINDER_1_MINUTES` (60) after the last activity and `CART_REMINDER_2_HOURS` (24),
+  at least 12 h apart; no first reminder after 72 h; one sequence per address per shop per week; bags expire after
+  `CART_EXPIRE_DAYS` (7) and the email/name are deleted (also on purchase and unsubscribe).
+- Idempotent: the sweeper (`CART_SWEEP_MS`, 60 s) claims `reminderNAt` and writes the outbox row (dedupe key
+  `CART_REMINDER_N:<cartId>`) in one transaction, so concurrent sweepers or retries send once. At send time the
+  outbox re-checks purchase, consent, suppression and the store setting, and cancels the email (`CANCELLED`) if any fail.
+- Compliance: every reminder has the store's **mailing address** (required to turn reminders on; CAN-SPAM/CASL),
+  `List-Unsubscribe` + `List-Unsubscribe-Post` (RFC 8058 one-click), and a signed unsubscribe page where GET only
+  shows a button (link scanners can't unsubscribe anyone). Unsubscribes are per shop and permanent. Order emails are
+  transactional and unaffected. No fake urgency or discounts in the copy.
+- Recovered revenue counts only orders paid after a reminder was **sent** on that bag.
+- Signed links use `EMAIL_LINK_SECRET` (≥ 32 chars). **Required in production**; the API refuses to start without it.
+- e2e: the reminder step backdates a bag with local `psql` and waits for the sweeper, so start the API with
+  `CART_SWEEP_MS=3000` (skipped if psql isn't available).
+
+### Keys for slice 5
+| Purpose | Env | Notes |
+|---|---|---|
+| Copy drafts | `LLM_API_KEY` (+ `LLM_BASE_URL`, `LLM_MODEL`) | Any OpenAI-compatible endpoint; `OPENAI_API_KEY` also works |
+| Search trends | `SERPAPI_API_KEY` | Paid SerpApi plan (Google has no public Trends API; the Trends API alpha is invite-only) |
+| Ad saturation | `META_AD_LIBRARY_TOKEN` | User token from a Meta app with Ad Library API access; the account must finish identity verification |
+| Signed email links | `EMAIL_LINK_SECRET` | `openssl rand -base64 32` |
+| Sending | `RESEND_API_KEY` + verified sending domain | From slice 2; reminders stay in the outbox/dev transport without it |
+| Per store | Mailing address | Entered by each merchant on the Recovery page |
+
 ## Dependency audit (`pnpm audit --prod`)
 
 QA round 1 found 42 (21 high, 2 critical). Fixed by upgrades: `next` ^15.5.29 (Image Optimizer RCE; admin + storefront, and the Image Optimization API is disabled with `images.unoptimized` and no `remotePatterns`), `better-auth` ^1.7.22, `zod` ^4.6.6. Transitive fixes are version-scoped `pnpm.overrides` in the root `package.json` (each only rewrites versions below the patched one): `sharp` ≥0.35.5, `multer` ≥2.1.0, `body-parser` ≥1.20.6, `qs` ≥6.15.2, `js-yaml` 4.x ≥4.1.1, `lodash` ≥4.18.0, `postcss` ≥8.5.10, `source-map-js` ≥1.2.2, `deepmerge-ts` ≥8, `file-type` ≥21.3.1, `zod` 4.x ≥4.6.6.
