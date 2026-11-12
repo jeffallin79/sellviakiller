@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import { prisma, Prisma } from '@storeforge/db';
-import { getPaymentProvider } from './index';
+import { getPaymentProvider, isDefiniteRejection } from './index';
 
 const MIN_TOPUP = 1000; // $10
 const MAX_TOPUP = 500000; // $5,000
@@ -104,44 +104,99 @@ export class FuelService {
     if (amount > remaining) throw new BadRequestException('More than the unrefunded part of this top-up');
     if (!topup.providerPaymentId) throw new BadRequestException('Top-up has no payment reference');
 
+    // Reserve the fuel and persist the pending refund record in one transaction (balance can't go
+    // below zero: guarded here and by the AdWallet_balance_nonnegative CHECK constraint).
+    const txn = await prisma.$transaction(async (tx) => {
+      const reserved = await tx.adWallet.updateMany({
+        where: { id: w.id, balanceCents: { gte: amount } },
+        data: { balanceCents: { decrement: amount } },
+      });
+      if (reserved.count !== 1) throw new BadRequestException('Only unspent fuel can be refunded');
+      return tx.walletTxn.create({
+        data: { walletId: w.id, kind: 'REFUND', amountCents: -amount, provider: topup.provider, refundOfId: topup.id, status: 'pending' },
+      });
+    });
+
+    return this.submitRefund(txn.id);
+  }
+
+  /**
+   * Sends (or re-sends) a pending REFUND txn to the provider. Same idempotency key every time,
+   * plus a metadata lookup first, so a timed-out call can never create a second refund.
+   * Fuel is restored ONLY when the refund is confirmed failed (provider status failed/canceled,
+   * or a definitive 4xx rejection). Any other error leaves the txn "unknown" for the reconciler.
+   */
+  async submitRefund(txnId: string) {
+    const txn = await prisma.walletTxn.findUniqueOrThrow({ where: { id: txnId } });
+    const topup = txn.refundOfId ? await prisma.walletTxn.findUnique({ where: { id: txn.refundOfId } }) : null;
+    if (!topup?.providerPaymentId) throw new BadRequestException('Top-up has no payment reference');
+    const amount = -txn.amountCents;
     // Processor cost deduction (blueprint: "minus processor costs"). Defaults to 0 until Jeff sets it.
     const feeBps = Math.max(0, Number(process.env.FUEL_REFUND_FEE_BPS ?? 0) || 0);
     const feeFixed = Math.max(0, Number(process.env.FUEL_REFUND_FEE_FIXED_CENTS ?? 0) || 0);
     const cardRefund = Math.max(0, amount - Math.round((amount * feeBps) / 10000) - feeFixed);
-
-    // Reserve the fuel first (atomic, can't go below zero) so spend and refund can't race.
-    const reserved = await prisma.adWallet.updateMany({
-      where: { id: w.id, balanceCents: { gte: amount } },
-      data: { balanceCents: { decrement: amount } },
-    });
-    if (reserved.count !== 1) throw new BadRequestException('Only unspent fuel can be refunded');
-    const txn = await prisma.walletTxn.create({
-      data: { walletId: w.id, kind: 'REFUND', amountCents: -amount, provider: topup.provider, refundOfId: topup.id, status: 'pending' },
-    });
-
     const provider = getPaymentProvider();
     try {
-      const r =
-        cardRefund > 0
-          ? await provider.refundPayment({
-              paymentId: topup.providerPaymentId,
-              amountCents: cardRefund,
-              idempotencyKey: `sf-fuelrefund-${txn.id}`,
-              metadata: { kind: 'ad_fuel_refund', walletTxnId: txn.id, walletId: w.id },
-            })
-          : { refundId: `none_${txn.id}`, status: 'succeeded' };
+      let r: { refundId: string; status: string } | null = null;
+      if (cardRefund <= 0) r = { refundId: `none_${txn.id}`, status: 'succeeded' };
+      if (!r) r = await provider.findRefundByMetadata(topup.providerPaymentId, 'walletTxnId', txn.id);
+      if (!r) {
+        r = await provider.refundPayment({
+          paymentId: topup.providerPaymentId,
+          amountCents: cardRefund,
+          idempotencyKey: `sf-fuelrefund-${txn.id}`,
+          metadata: { kind: 'ad_fuel_refund', walletTxnId: txn.id, walletId: txn.walletId },
+        });
+      }
       const status = r.status === 'failed' || r.status === 'canceled' ? 'failed' : r.status === 'succeeded' ? 'succeeded' : 'pending';
-      await prisma.walletTxn.update({ where: { id: txn.id }, data: { providerRefundId: r.refundId, status } });
+      await prisma.walletTxn.update({ where: { id: txn.id }, data: { providerRefundId: r.refundId, status: status === 'failed' ? 'pending' : status, lastError: null, reconciledAt: new Date() } });
       if (status === 'failed') await this.reverseFailedRefund(r.refundId);
       return { refundId: r.refundId, status, fuelDebitedCents: amount, cardRefundCents: cardRefund };
     } catch (e) {
-      // Provider rejected the refund: give the fuel back.
-      await prisma.$transaction([
-        prisma.walletTxn.update({ where: { id: txn.id }, data: { status: 'failed' } }),
-        prisma.adWallet.update({ where: { id: w.id }, data: { balanceCents: { increment: amount } } }),
-      ]);
-      throw e;
+      const msg = e instanceof Error ? e.message : String(e);
+      if (isDefiniteRejection(e)) {
+        // Stripe refused it, so no refund exists: safe to give the fuel back (exactly once).
+        const ref = `rejected_${txn.id}`;
+        await prisma.walletTxn.update({ where: { id: txn.id }, data: { providerRefundId: txn.providerRefundId ?? ref, lastError: msg.slice(0, 500) } });
+        await this.reverseFailedRefund(txn.providerRefundId ?? ref);
+        throw new BadRequestException(`Refund was declined: ${msg}`);
+      }
+      // Timeout / network / 5xx: the refund may exist. Keep the fuel reserved; reconciler decides.
+      await prisma.walletTxn.update({ where: { id: txn.id }, data: { status: 'unknown', lastError: msg.slice(0, 500), reconciledAt: new Date() } });
+      this.logger.warn(`Fuel refund ${txn.id} outcome unknown (${msg}); reconciler will confirm`);
+      return { refundId: txn.providerRefundId, status: 'unknown' as const, fuelDebitedCents: amount, cardRefundCents: cardRefund };
     }
+  }
+
+  /**
+   * Reconciler: refunds still pending/unknown after `olderThanMs` are checked against the provider.
+   *  - known refund id → fetch its status
+   *  - no id yet       → look it up by metadata; if Stripe has none, re-submit with the same key
+   */
+  async reconcilePendingRefunds(olderThanMs = 5 * 60_000, now = new Date()) {
+    const cutoff = new Date(now.getTime() - olderThanMs);
+    const stuck = await prisma.walletTxn.findMany({
+      where: { kind: 'REFUND', status: { in: ['pending', 'unknown'] }, OR: [{ reconciledAt: null }, { reconciledAt: { lt: cutoff } }], createdAt: { lt: cutoff } },
+      take: 50,
+    });
+    const provider = getPaymentProvider();
+    const out: { txnId: string; result: string }[] = [];
+    for (const t of stuck) {
+      try {
+        if (t.providerRefundId && !t.providerRefundId.startsWith('none_') && !t.providerRefundId.startsWith('rejected_')) {
+          const r = await provider.getRefund(t.providerRefundId);
+          await prisma.walletTxn.update({ where: { id: t.id }, data: { reconciledAt: now } });
+          if (r) await this.applyRefundStatus(r.refundId, r.status);
+          out.push({ txnId: t.id, result: r?.status ?? 'not_found' });
+        } else {
+          const r = await this.submitRefund(t.id);
+          out.push({ txnId: t.id, result: String(r.status) });
+        }
+      } catch (e) {
+        out.push({ txnId: t.id, result: `error: ${e instanceof Error ? e.message : e}` });
+      }
+    }
+    return out;
   }
 
   /** refund.updated/refund.failed → succeeded or failed. Idempotent. */
@@ -149,7 +204,7 @@ export class FuelService {
     const txn = await prisma.walletTxn.findFirst({ where: { kind: 'REFUND', providerRefundId: refundId } });
     if (!txn) return { matched: false };
     if (status === 'failed' || status === 'canceled') return this.reverseFailedRefund(refundId);
-    if (status === 'succeeded' && txn.status === 'pending') {
+    if (status === 'succeeded' && (txn.status === 'pending' || txn.status === 'unknown')) {
       await prisma.walletTxn.update({ where: { id: txn.id }, data: { status: 'succeeded' } });
     }
     return { matched: true };

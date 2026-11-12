@@ -56,6 +56,12 @@ export class StubPaymentProvider implements PaymentProvider {
   async refundPayment(_o: { paymentId: string }) {
     return { refundId: `stub_re_${randomUUID()}`, status: 'succeeded' };
   }
+  async getRefund(refundId: string) {
+    return { refundId, status: 'succeeded' };
+  }
+  async findRefundByMetadata() {
+    return null;
+  }
   verifyWebhook(): ProviderEvent {
     throw new WebhookSignatureError('Payments are in stub mode; webhooks are disabled');
   }

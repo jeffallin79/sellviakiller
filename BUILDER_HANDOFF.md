@@ -4,7 +4,7 @@
 **For:** Builder  
 **Status:** Jeff locked own-storefront blueprint — implement Phase 0 MVP  
 **Working name:** StoreForge (rename later if Jeff picks another)  
-**Payment change (2026-09-18):** Jeff mandated Square. **Superseded 2026-11-12:** StoreForge now uses **Stripe** — see PHASE1_BLUEPRINT.md "Payments switch".
+**Payments:** StoreForge uses **Stripe** (switched 2026-11-12; the earlier Square integration and its env vars were removed) — see PHASE1_BLUEPRINT.md "Payments switch".
 
 ## Goal
 Full-stack Sellvia competitor: turnkey multi-tenant ecommerce for dropshippers/digital sellers. Beat Sellvia on clear pricing, modern stack (not WordPress lock-in), honest fulfillment ETAs, exportable merchant data, and research baked into the dashboard.
@@ -21,7 +21,7 @@ Full-stack Sellvia competitor: turnkey multi-tenant ecommerce for dropshippers/d
 - Starter ~$29/mo — 1 store, catalog, basic research, ~100 orders/mo
 - Growth ~$79/mo — 3 stores, email tools, ads drafts later, higher limits
 - Scale ~$199/mo — multi-store, priority routing, API later
-- Optional small Square application fee / platform fee on checkout
+- Optional platform fee on checkout (Stripe `application_fee_amount`, `PLATFORM_FEE_BPS`, default 0)
 - **No weekly performance tiers**
 
 ## Stack (locked)
@@ -32,7 +32,7 @@ Full-stack Sellvia competitor: turnkey multi-tenant ecommerce for dropshippers/d
 | DB | Postgres + Prisma or Drizzle |
 | Jobs | Redis + BullMQ |
 | Auth | Clerk or Better Auth |
-| Payments | **Square** (Checkout / Payment Links + Square subscriptions for SaaS; Square for Platforms / OAuth for merchant payouts as needed) |
+| Payments | **Stripe** (Billing + Customer Portal for SaaS plans; Connect Express for merchant payouts; PaymentIntents for Ad Fuel). Square was removed 2026-11-12. |
 | Email | Resend or Postmark |
 | Media | Cloudflare R2 or S3 |
 | Hosting | Vercel (apps) + Railway/Fly (API + workers) — or all on Fly |
@@ -46,7 +46,7 @@ Merchant browser
   → API
        → Postgres (tenants, stores, catalog, orders, billing)
        → Redis + BullMQ (sync, fulfill, email, webhooks)
-       → Square (Checkout + SaaS subscriptions + merchant payments)
+       → Stripe (Billing, Checkout destination charges via Connect Express, Ad Fuel PaymentIntents)
        → Supplier adapter interface → CJ impl first
 ```
 
@@ -55,11 +55,11 @@ Merchant browser
 ## Phase 0 MVP — ship runnable first
 Acceptance criteria:
 1. Merchant can sign up / sign in
-2. Merchant can subscribe via Square (at least Starter price placeholder)
+2. Merchant can subscribe (Stripe Billing; stub mode without keys)
 3. Platform provisions **one** store (subdomain like `{slug}.storeforge.local` / staging domain)
 4. Seed catalog: import/sync **200–500** SKUs via CJ (or realistic fixtures if CJ keys missing — flag blocker)
 5. 1-click product import from catalog → store
-6. Customer can checkout on storefront via Square
+6. Customer can checkout on storefront (Stripe Checkout; stub mode without keys)
 7. Order appears in merchant admin
 8. Fulfillment path: manual approve **or** auto if rules pass → job pushes to supplier adapter (CJ) → store tracking when webhook/poll returns
 9. Basic order list + status + tracking display
@@ -97,7 +97,7 @@ interface SupplierAdapter {
 Implement `CjAdapter`; stub `SpocketAdapter` / `ZendropAdapter`.
 
 ### Order flow (Phase 0)
-1. Square payment webhook → create Order (Paid)
+1. Stripe `checkout.session.completed` webhook → Order PAID
 2. Enqueue `route-fulfillment`
 3. If auto-fulfill enabled + margin/deposit rules OK → adapter.createFulfillment
 4. Else status = AwaitingMerchantApproval
@@ -121,7 +121,7 @@ Implement `CjAdapter`; stub `SpocketAdapter` / `ZendropAdapter`.
 
 ## Env / secrets Jeff will need
 - DATABASE_URL, REDIS_URL
-- SQUARE_ACCESS_TOKEN, SQUARE_APPLICATION_ID, SQUARE_LOCATION_ID, SQUARE_WEBHOOK_SIGNATURE_KEY, Square plan/catalog IDs for SaaS
+- STRIPE_SECRET_KEY, STRIPE_PUBLISHABLE_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_CONNECT_WEBHOOK_SECRET, STRIPE_PRICE_STARTER/GROWTH/SCALE (see README → Payments)
 - CJ API credentials (request from Jeff when ready)
 - AUTH provider keys
 - RESEND_API_KEY

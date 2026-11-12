@@ -104,6 +104,8 @@ pnpm test                # API tests (fresh schema in storeforge_test, migration
 
 `ALLOW_STUB_PAY=true` enables authenticated `POST /api/orders/:id/stub-pay` for local demos. Leave unset/false in production (endpoint returns 404).
 
+> **Testers:** start from `.env.example`, never copy the build box's `.env` — it is a local demo file with `ALLOW_STUB_PAY=true` and dev-only settings.
+
 ## License
 
 Private — StoreForge Phase 0 scaffold.
@@ -115,10 +117,10 @@ Merchant tenant model is named **Organization** in Prisma (Better Auth reserves 
 
 ## Verified on this box (2026-09-18)
 
-Without Docker/Redis/`SQUARE_*`/`CJ_*`:
+Without Docker/Redis/Stripe keys/`CJ_*`:
 - Embedded Postgres via `.local-bin/pgsql` + `scripts/start-local-postgres.sh`
 - BullMQ falls back to **inline** jobs when Redis is down
-- Full path: signup → Square stub subscribe → provision `demo` → import 5 SKUs → checkout (PAID stub) → approve → CJ stub tracking `SHIPPED`
+- Full path: signup → stub plan → stub payouts → provision store → import SKUs → checkout (PAID stub) → approve → CJ stub tracking `SHIPPED` → Ad Fuel top-up/refund → CSV export
 
 Prefer `docker compose up -d` on Jeff's machine for Postgres+Redis.
 
@@ -134,10 +136,19 @@ Prefer `docker compose up -d` on Jeff's machine for Postgres+Redis.
 | Ad Fuel | `POST /api/fuel/topups` → platform PaymentIntent (`setup_future_usage=off_session`); credited from `payment_intent.succeeded`; `POST /api/fuel/refunds` (unspent, ≤90 days) |
 | Webhooks | `POST /api/webhooks/stripe` (platform, `STRIPE_WEBHOOK_SECRET`) and `/api/webhooks/stripe/connect` (`STRIPE_CONNECT_WEBHOOK_SECRET`). Signature required; event id dedupe in `WebhookEvent`; every handler idempotent; subscriptions re-read from Stripe so order/replays don't matter; live events ignored by a test-key server |
 
-Platform webhook events: `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, `customer.subscription.created/updated/deleted/paused/resumed`, `invoice.paid`, `invoice.payment_failed`, `payment_intent.succeeded`, `refund.created/updated/failed`, `charge.dispute.created`. Connect endpoint: `account.updated`.
+Platform webhook events: `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, `customer.subscription.created/updated/deleted/paused/resumed`, `invoice.paid`, `invoice.payment_failed`, `payment_intent.succeeded`, `refund.created/updated/failed`, `charge.dispute.created/updated/closed/funds_withdrawn/funds_reinstated`. Connect endpoint: `account.updated`.
 
 Live keys (`sk_live_`) are refused unless `STRIPE_ALLOW_LIVE=true`.
 
 **Existing dev DB created with `db push` (Phase 0)?** Mark the baseline as applied, then deploy:
 `cd packages/db && npx prisma migrate resolve --applied 20260918000000_phase0_baseline && npx prisma migrate deploy`.
-The second migration renames the Square columns (data kept, rows tagged `provider='square'`).
+The second migration renames the Phase 0 payment columns to provider-neutral ones (data kept, legacy rows tagged `provider='square'`).
+
+### Payment hardening (QA round 1)
+
+- **Webhook claim:** the worker that inserts the `WebhookEvent` row owns it (lease in `lockedUntil`); concurrent deliveries of the same event get 200 without dispatching. A failed attempt releases the lease so Stripe's retry can take it.
+- **Exactly-once PAID:** `markPaid` is a conditional update (`status = PENDING_PAYMENT`); fulfillment is enqueued only by the caller whose update changed the row.
+- **Mismatch:** a paid event whose amount/currency/checkout id doesn't match the order flags the order (`Order.flag = payment_mismatch`), raises merchant + platform notifications, logs at error level, and answers 409 so the event stays unresolved and retried.
+- **Ad Fuel refunds:** reserve + pending `WalletTxn` in one transaction; same idempotency key on every retry; on timeout the outcome is `unknown` and fuel stays reserved; the reconciler (`FUEL_RECONCILE_MS`, default 10 min) looks the refund up on Stripe by metadata and only restores fuel on a confirmed failure.
+- **DB guard:** CHECK constraints `AdWallet_balance_nonnegative` / `AdWallet_bonus_nonnegative`.
+- **Disputes:** `Dispute` rows; order flagged `dispute_open` / `dispute_lost`, store `riskFlag = open_disputes:N`; merchant + platform `Notification`s (`GET /api/notifications`). Evidence is submitted in the Stripe Dashboard for now.

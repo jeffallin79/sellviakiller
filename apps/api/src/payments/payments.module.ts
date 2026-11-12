@@ -5,12 +5,15 @@ import { BillingModule } from '../billing/billing.module';
 import { FuelService } from './fuel.service';
 import { PayoutsService } from './payouts.service';
 import { WebhookProcessorService } from './webhook-processor.service';
-import { StripeWebhooksController, PayoutsController, FuelController } from './payments.controller';
+import { NotificationsService } from './notifications.service';
+import { DisputesService } from './disputes.service';
+import { FuelReconciler } from './fuel.reconciler';
+import { StripeWebhooksController, PayoutsController, FuelController, NotificationsController } from './payments.controller';
 
 @Module({
   imports: [AuthModule, OrdersModule, BillingModule],
-  controllers: [StripeWebhooksController, PayoutsController, FuelController],
-  providers: [FuelService, PayoutsService, WebhookProcessorService],
-  exports: [FuelService, PayoutsService],
+  controllers: [StripeWebhooksController, PayoutsController, FuelController, NotificationsController],
+  providers: [FuelService, PayoutsService, WebhookProcessorService, NotificationsService, DisputesService, FuelReconciler],
+  exports: [FuelService, PayoutsService, NotificationsService],
 })
 export class PaymentsModule {}

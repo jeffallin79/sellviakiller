@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Req, Headers, UseGuards, HttpCode, BadRequestException, ServiceUnavailableException, Logger } from '@nestjs/common';
+import { Controller, Get, Post, Body, Req, Param, Headers, UseGuards, HttpCode, BadRequestException, ServiceUnavailableException, Logger } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { z } from 'zod';
@@ -8,6 +8,7 @@ import { AuthService } from '../auth/auth.service';
 import { FuelService } from './fuel.service';
 import { PayoutsService } from './payouts.service';
 import { WebhookProcessorService } from './webhook-processor.service';
+import { NotificationsService } from './notifications.service';
 import { getPaymentProvider, WebhookSignatureError, ProviderNotConfiguredError, type WebhookEndpoint } from './index';
 
 @ApiTags('webhooks')
@@ -90,5 +91,23 @@ export class FuelController {
       .object({ topupTxnId: z.string(), amountCents: z.number().int().positive().optional() })
       .parse(body ?? {});
     return this.fuel.refundTopUp(await this.auth.requireAccountId(user.id), topupTxnId, amountCents);
+  }
+}
+
+@ApiTags('notifications')
+@Controller('notifications')
+@UseGuards(AuthGuard)
+export class NotificationsController {
+  constructor(private readonly notifications: NotificationsService, private readonly auth: AuthService) {}
+
+  @Get()
+  async list(@CurrentUser() user: { id: string }) {
+    return this.notifications.list(await this.auth.requireAccountId(user.id));
+  }
+
+  @Post(':id/read')
+  @HttpCode(200)
+  async read(@CurrentUser() user: { id: string }, @Param('id') id: string) {
+    return this.notifications.markRead(await this.auth.requireAccountId(user.id), id);
   }
 }

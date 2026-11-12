@@ -41,18 +41,18 @@ enum SubscriptionStatus {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
-  emailVerified Boolean   @default(false)
+  id            String   @id @default(cuid())
+  email         String   @unique
+  emailVerified Boolean  @default(false)
   name          String?
   image         String?
   passwordHash  String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  sessions      Session[]
-  accounts      Account[]
-  memberships   OrganizationMember[]
+  sessions    Session[]
+  accounts    Account[]
+  memberships OrganizationMember[]
 }
 
 /// Better Auth session
@@ -107,13 +107,13 @@ model Organization {
   updatedAt DateTime @updatedAt
 
   /// Platform-side billing customer (Stripe `cus_…`): SaaS plan + Ad Fuel top-ups
-  billingCustomerId      String?  @unique
+  billingCustomerId      String?   @unique
   /// Merchant payout account (Stripe Connect Express `acct_…`), one per merchant
   payoutProvider         String?
-  payoutAccountId        String?  @unique
-  payoutChargesEnabled   Boolean  @default(false)
-  payoutPayoutsEnabled   Boolean  @default(false)
-  payoutDetailsSubmitted Boolean  @default(false)
+  payoutAccountId        String?   @unique
+  payoutChargesEnabled   Boolean   @default(false)
+  payoutPayoutsEnabled   Boolean   @default(false)
+  payoutDetailsSubmitted Boolean   @default(false)
   payoutUpdatedAt        DateTime?
 
   members      OrganizationMember[]
@@ -137,48 +137,51 @@ model OrganizationMember {
 }
 
 model Plan {
-  id                 String   @id // starter | growth | scale
-  name               String
-  priceUsd           Int
-  maxStores          Int
-  maxOrdersPerMonth  Int
+  id                String   @id // starter | growth | scale
+  name              String
+  priceUsd          Int
+  maxStores         Int
+  maxOrdersPerMonth Int
   /// Provider price id (Stripe `price_…`); env STRIPE_PRICE_* overrides at runtime
-  providerPriceId    String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  providerPriceId   String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   subscriptions Subscription[]
 }
 
 model Subscription {
-  id                   String             @id @default(cuid())
-  organizationId       String             @unique
-  planId               String
-  status               SubscriptionStatus @default(INCOMPLETE)
+  id                     String             @id @default(cuid())
+  organizationId         String             @unique
+  planId                 String
+  status                 SubscriptionStatus @default(INCOMPLETE)
   provider               String             @default("stub") // stub | stripe
   providerSubscriptionId String?            @unique
   providerCustomerId     String?
-  currentPeriodEnd     DateTime?
-  cancelAtPeriodEnd    Boolean            @default(false)
-  createdAt            DateTime           @default(now())
-  updatedAt            DateTime           @updatedAt
+  currentPeriodEnd       DateTime?
+  cancelAtPeriodEnd      Boolean            @default(false)
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   plan         Plan         @relation(fields: [planId], references: [id])
 }
 
 model Store {
-  id           String      @id @default(cuid())
+  id             String      @id @default(cuid())
   organizationId String
-  name         String
-  slug         String      @unique
-  theme        String      @default("default")
-  customDomain String?
-  status       StoreStatus @default(ACTIVE)
-  autoFulfill  Boolean     @default(false)
-  deletedAt    DateTime?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  name           String
+  slug           String      @unique
+  theme          String      @default("default")
+  customDomain   String?
+  status         StoreStatus @default(ACTIVE)
+  autoFulfill    Boolean     @default(false)
+  /// Risk flag shown in admin (e.g. open_disputes)
+  riskFlag       String?
+  riskFlaggedAt  DateTime?
+  deletedAt      DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
 
   organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   storeProducts StoreProduct[]
@@ -196,8 +199,8 @@ model Supplier {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  products Product[]
-  mappings SupplierProductMapping[]
+  products     Product[]
+  mappings     SupplierProductMapping[]
   fulfillments Fulfillment[]
 }
 
@@ -232,14 +235,14 @@ model Product {
 }
 
 model SupplierProductMapping {
-  id               String   @id @default(cuid())
-  supplierId       String
-  productId        String
-  externalSku      String
+  id                String   @id @default(cuid())
+  supplierId        String
+  productId         String
+  externalSku       String
   externalVariantId String?
-  metadata         Json?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  metadata          Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   supplier Supplier @relation(fields: [supplierId], references: [id])
   product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
@@ -249,19 +252,19 @@ model SupplierProductMapping {
 
 /// Merchant store listing (price override)
 model StoreProduct {
-  id          String    @id @default(cuid())
-  storeId     String
-  productId   String
-  title       String?
-  priceCents  Int
+  id             String    @id @default(cuid())
+  storeId        String
+  productId      String
+  title          String?
+  priceCents     Int
   compareAtCents Int?
-  active      Boolean   @default(true)
-  deletedAt   DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  active         Boolean   @default(true)
+  deletedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  product Product @relation(fields: [productId], references: [id])
+  store   Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  product Product     @relation(fields: [productId], references: [id])
   lines   OrderLine[]
 
   @@unique([storeId, productId])
@@ -292,12 +295,16 @@ model Order {
   providerCheckoutId String?     @unique
   /// Connected account the charge was routed to (destination charge)
   payoutAccountId    String?
+  /// Admin-visible problem: payment_mismatch | dispute_open | dispute_lost (null = fine)
+  flag               String?
+  flagDetail         String?
+  flaggedAt          DateTime?
   createdAt          DateTime    @default(now())
   updatedAt          DateTime    @updatedAt
 
-  store         Store          @relation(fields: [storeId], references: [id])
-  lines         OrderLine[]
-  fulfillment   Fulfillment?
+  store          Store           @relation(fields: [storeId], references: [id])
+  lines          OrderLine[]
+  fulfillment    Fulfillment?
   trackingEvents TrackingEvent[]
 
   @@index([storeId])
@@ -322,18 +329,18 @@ model OrderLine {
 }
 
 model Fulfillment {
-  id               String            @id @default(cuid())
-  orderId          String            @unique
-  supplierId       String
-  status           FulfillmentStatus @default(PENDING)
-  externalId       String?
-  trackingNumber   String?
-  carrier          String?
-  submittedAt      DateTime?
-  shippedAt        DateTime?
-  errorMessage     String?
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
+  id             String            @id @default(cuid())
+  orderId        String            @unique
+  supplierId     String
+  status         FulfillmentStatus @default(PENDING)
+  externalId     String?
+  trackingNumber String?
+  carrier        String?
+  submittedAt    DateTime?
+  shippedAt      DateTime?
+  errorMessage   String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
 
   order    Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
   supplier Supplier @relation(fields: [supplierId], references: [id])
@@ -354,22 +361,24 @@ model TrackingEvent {
 
 /// Optional prepaid wholesale balance (stub for Phase 0)
 model DepositBalance {
-  id        String   @id @default(cuid())
+  id             String   @id @default(cuid())
   organizationId String   @unique
-  balanceCents Int   @default(0)
-  currency  String   @default("USD")
-  updatedAt DateTime @updatedAt
-  createdAt DateTime @default(now())
+  balanceCents   Int      @default(0)
+  currency       String   @default("USD")
+  updatedAt      DateTime @updatedAt
+  createdAt      DateTime @default(now())
 }
 
 /// Processed payment-provider webhook events (replay protection, keyed on provider event id)
 model WebhookEvent {
   id          String    @id // provider event id, e.g. evt_…
   provider    String
-  endpoint    String    // platform | connect
+  endpoint    String // platform | connect
   type        String
   receivedAt  DateTime  @default(now())
   processedAt DateTime?
+  /// Claim lease: only the worker that holds it dispatches the event (concurrent deliveries → 200, no dispatch)
+  lockedUntil DateTime?
   attempts    Int       @default(1)
   lastError   String?
 
@@ -414,7 +423,10 @@ model WalletTxn {
   providerRefundId  String?
   /// For REFUND: the TOPUP txn being refunded
   refundOfId        String?
-  status            String        @default("succeeded") // pending | succeeded | failed
+  status            String        @default("succeeded") // pending | unknown | succeeded | failed
+  /// REFUND: last provider error (an "unknown" refund is never restored until confirmed failed)
+  lastError         String?
+  reconciledAt      DateTime?
   campaignId        String?
   day               DateTime?
   createdAt         DateTime      @default(now())
@@ -424,4 +436,46 @@ model WalletTxn {
   @@unique([kind, providerPaymentId])
   @@unique([kind, providerRefundId])
   @@index([walletId])
+}
+
+/// Card dispute (chargeback). Destination charges live on the platform account, so disputes arrive there.
+model Dispute {
+  id                String    @id @default(cuid())
+  provider          String    @default("stripe")
+  providerDisputeId String    @unique
+  chargeId          String?
+  paymentIntentId   String?
+  orderId           String?
+  storeId           String?
+  organizationId    String?
+  amountCents       Int
+  currency          String
+  reason            String?
+  /// warning_needs_response | needs_response | under_review | won | lost | …
+  status            String
+  evidenceDueBy     DateTime?
+  closedAt          DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([orderId])
+  @@index([organizationId])
+}
+
+/// In-app alerts. organizationId null = platform/ops alert.
+model Notification {
+  id             String    @id @default(cuid())
+  organizationId String?
+  /// dispute_opened | dispute_updated | dispute_closed | payment_mismatch | refund_stuck
+  kind           String
+  severity       String    @default("warning") // info | warning | critical
+  title          String
+  body           String
+  orderId        String?
+  /// Exactly-once per (event, state)
+  dedupeKey      String    @unique
+  readAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([organizationId, createdAt])
 }

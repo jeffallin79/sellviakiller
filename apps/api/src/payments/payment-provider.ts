@@ -90,12 +90,29 @@ export interface PaymentProvider {
     idempotencyKey: string;
     metadata?: Record<string, string>;
   }): Promise<{ refundId: string; status: string }>;
+  /** Current status of a refund we created. */
+  getRefund(refundId: string): Promise<{ refundId: string; status: string } | null>;
+  /** Finds a refund on a payment by metadata (recovers refunds whose create call timed out). */
+  findRefundByMetadata(paymentId: string, key: string, value: string): Promise<{ refundId: string; status: string } | null>;
 
   /** Throws on bad/missing signature. Never accepts unsigned payloads. */
   verifyWebhook(rawBody: Buffer, signature: string | undefined, endpoint: WebhookEndpoint): ProviderEvent;
 }
 
 export class WebhookSignatureError extends Error {}
+
+/**
+ * True only when the provider definitively refused the request (so nothing was created):
+ * a 4xx invalid-request/card error. Timeouts, connection errors, 5xx, 409 (idempotency in
+ * progress) and 429 are "unknown" — the call may have succeeded on Stripe's side.
+ */
+export function isDefiniteRejection(e: unknown): boolean {
+  const err = e as { type?: string; statusCode?: number; rawType?: string } | null;
+  if (!err || typeof err !== 'object') return false;
+  const code = err.statusCode ?? 0;
+  const typed = err.type === 'StripeInvalidRequestError' || err.type === 'StripeCardError' || err.rawType === 'invalid_request_error';
+  return typed && code >= 400 && code < 500 && code !== 409 && code !== 429;
+}
 export class ProviderNotConfiguredError extends Error {}
 
 export function priceIdForPlan(planId: string, dbPriceId?: string | null): string | null {

@@ -23,13 +23,20 @@ export class FulfillmentService {
     const firstProduct = order.lines[0]?.storeProduct.product;
     if (!firstProduct) throw new BadRequestException('Order has no lines');
 
-    const fulfillment = await prisma.fulfillment.create({
-      data: {
-        orderId: order.id,
-        supplierId: firstProduct.supplierId,
-        status: FulfillmentStatus.PENDING,
-      },
-    });
+    let fulfillment: Fulfillment;
+    try {
+      fulfillment = await prisma.fulfillment.create({
+        data: {
+          orderId: order.id,
+          supplierId: firstProduct.supplierId,
+          status: FulfillmentStatus.PENDING,
+        },
+      });
+    } catch (e: any) {
+      // Fulfillment.orderId is unique: a concurrent route already created it.
+      if (e?.code === 'P2002') return prisma.fulfillment.findUniqueOrThrow({ where: { orderId: order.id } });
+      throw e;
+    }
 
     const auto =
       order.store.autoFulfill || process.env.AUTO_FULFILL_ENABLED === 'true';

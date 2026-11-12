@@ -205,6 +205,23 @@ export class StripePaymentProvider implements PaymentProvider {
     return { refundId: r.id, status: r.status ?? 'pending' };
   }
 
+  async getRefund(refundId: string) {
+    try {
+      const r = await this.stripe.refunds.retrieve(refundId);
+      return { refundId: r.id, status: r.status ?? 'pending' };
+    } catch (e: any) {
+      if (e?.statusCode === 404) return null;
+      throw e;
+    }
+  }
+
+  async findRefundByMetadata(paymentId: string, key: string, value: string) {
+    for await (const r of this.stripe.refunds.list({ payment_intent: paymentId, limit: 100 })) {
+      if (r.metadata?.[key] === value) return { refundId: r.id, status: r.status ?? 'pending' };
+    }
+    return null;
+  }
+
   verifyWebhook(rawBody: Buffer, signature: string | undefined, endpoint: WebhookEndpoint): ProviderEvent {
     const secret =
       endpoint === 'connect' ? process.env.STRIPE_CONNECT_WEBHOOK_SECRET : process.env.STRIPE_WEBHOOK_SECRET;
