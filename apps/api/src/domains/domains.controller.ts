@@ -1,10 +1,16 @@
-import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards, NotFoundException, ForbiddenException, HttpCode } from '@nestjs/common';
+import { timingSafeEqual } from 'node:crypto';
+import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards, NotFoundException, ForbiddenException, HttpCode, ServiceUnavailableException } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { z } from 'zod';
 import { DomainsService } from './domains.service';
 import { AuthGuard } from '../common/auth.guard';
 import { CurrentUser } from '../common/current-user';
 import { AuthService } from '../auth/auth.service';
+
+function safeEqual(a: string, b: string) {
+  const x = Buffer.from(a), y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+}
 
 const AddDomainSchema = z.object({ storeId: z.string().min(1), host: z.string().min(3).max(300) });
 
@@ -62,12 +68,14 @@ export class DomainsController {
 
   /**
    * Caddy `on_demand_tls { ask <API>/api/domains/tls-ask?token=… }`. Caddy treats 200 as
-   * "issue a cert". If DOMAIN_TLS_ASK_TOKEN is set the token must match.
+   * "issue a cert". The token must match DOMAIN_TLS_ASK_TOKEN (required in caddy mode).
    */
   @Get('tls-ask')
   async tlsAsk(@Query('domain') domain?: string, @Query('token') token?: string) {
     const want = process.env.DOMAIN_TLS_ASK_TOKEN;
-    if (want && token !== want) throw new ForbiddenException();
+    // Caddy mode without a token is refused at boot; fail closed here too.
+    if (!want && (process.env.DOMAIN_TLS_PROVIDER ?? 'stub') === 'caddy') throw new ServiceUnavailableException('DOMAIN_TLS_ASK_TOKEN is not configured');
+    if (want && !safeEqual(token ?? '', want)) throw new ForbiddenException();
     if (!domain || !(await this.domains.tlsAllowed(domain))) throw new NotFoundException();
     return { ok: true };
   }

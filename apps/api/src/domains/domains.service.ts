@@ -195,10 +195,17 @@ export class DomainsService {
       const snap = await dns.lookup(d.host, { devDnsSimulatedAt: d.devDnsSimulatedAt, expectedTxt, expectedTarget: target, apexIps: ips });
       const txtOk = snap.txt.some((v) => v.trim() === expectedTxt);
       let routingOk = snap.cname.includes(target) || (ips.length > 0 && snap.a.some((a) => ips.includes(a)));
+      let targetA: string[] | null = null;
       if (!routingOk && snap.a.length && dns.mode === 'live') {
         // ALIAS / ANAME / CNAME flattening: apex A records equal the target's A records
-        const targetA = await dns.resolveA(target);
-        routingOk = targetA.length > 0 && snap.a.every((a) => targetA.includes(a));
+        targetA = await dns.resolveA(target);
+        routingOk = targetA.length > 0 && snap.a.every((a) => targetA!.includes(a));
+      }
+      // The address our TLS probe will be pinned to: one of OUR edge IPs that this domain resolved to.
+      let verifiedIp: string | null = null;
+      if (routingOk) {
+        const ours = new Set([...ips, ...(targetA ?? (dns.mode === 'live' ? await dns.resolveA(target) : []))]);
+        verifiedIp = snap.a.find((a) => ours.has(a)) ?? (snap.cname.includes(target) ? [...ours][0] ?? null : null);
       }
       const result: CheckResult = { txt: txtOk, routing: routingOk, tls: d.status === DomainStatus.ACTIVE ? 'issued' : null, seen: snap };
 
@@ -211,7 +218,7 @@ export class DomainsService {
       }
 
       if (txtOk && routingOk) {
-        const t = await tls.request(d.host).catch((e): { state: 'pending'; detail: string } => ({ state: 'pending', detail: String(e?.message ?? e) }));
+        const t = await tls.request(d.host, { ip: verifiedIp }).catch((e): { state: 'pending'; detail: string } => ({ state: 'pending', detail: String(e?.message ?? e) }));
         result.tls = t.state;
         result.detail = t.detail;
         const updated = await prisma.domain.update({
@@ -220,6 +227,7 @@ export class DomainsService {
             ...base,
             status: t.state === 'issued' ? DomainStatus.ACTIVE : t.state === 'failed' ? DomainStatus.FAILED : DomainStatus.ISSUING_TLS,
             verifiedAt: now,
+            verifiedIp,
             tlsRequestedAt: now,
             tlsIssuedAt: t.state === 'issued' ? now : null,
             tlsProvider: tls.kind,
@@ -247,7 +255,7 @@ export class DomainsService {
     }
 
     // ISSUING_TLS
-    const t = await tls.status(d.host, { tlsRequestedAt: d.tlsRequestedAt, now }).catch((e): { state: 'pending'; detail: string } => ({ state: 'pending', detail: String(e?.message ?? e) }));
+    const t = await tls.status(d.host, { tlsRequestedAt: d.tlsRequestedAt, now, ip: d.verifiedIp }).catch((e): { state: 'pending'; detail: string } => ({ state: 'pending', detail: String(e?.message ?? e) }));
     const prev = (d.lastResult ?? {}) as Partial<CheckResult>;
     const result = { ...prev, tls: t.state, detail: t.detail } as CheckResult;
     if (t.state === 'issued') {

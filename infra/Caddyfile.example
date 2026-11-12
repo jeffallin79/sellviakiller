@@ -3,7 +3,8 @@
 # Caddy asks the API before issuing a certificate, so only DNS-verified domains get one.
 #
 #   DOMAIN_TLS_PROVIDER=caddy
-#   DOMAIN_TLS_ASK_TOKEN=<long random string>       (same value below)
+#   DOMAIN_TLS_ASK_TOKEN=<24+ random chars>          (same value below; API refuses to start without it)
+#   TRUSTED_PROXIES=<Caddy's address as the storefront sees it, e.g. 172.16.0.0/12 or loopback>
 #   DOMAIN_CNAME_TARGET=stores.example-root.com
 #   DOMAIN_APEX_IPS=<this host's public IPv4>
 #

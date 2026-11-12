@@ -6,8 +6,10 @@ import type { Request, Response } from 'express';
 import { AppModule } from './app.module';
 import { auth } from './auth/better-auth';
 import { ZodValidationFilter } from './common/zod.filter';
+import { assertTlsConfig } from './domains/tls';
 
 async function bootstrap() {
+  assertTlsConfig(); // e.g. caddy without DOMAIN_TLS_ASK_TOKEN → refuse to start
   const app = await NestFactory.create(AppModule, { rawBody: true });
   const expressApp = app.getHttpAdapter().getInstance();
 
