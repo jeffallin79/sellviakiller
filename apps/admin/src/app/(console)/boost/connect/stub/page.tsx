@@ -26,7 +26,7 @@ function StubConsent() {
     <div className="boost-stub">
       <section className="sf-card">
         <p className="sf-eyebrow">Simulated Facebook · dev mode</p>
-        <h1 style={{ marginTop: 4 }}>StoreForge would like to</h1>
+        <h1 className="boost-stub__title">StoreForge would like to:</h1>
         {!ok ? <Callout tone="bad">This link is incomplete.</Callout> : (
           <>
             <ul className="boost-stub__list">{scopes.map((s) => <li key={s}><strong>{LABEL[s] ?? s}</strong> <span className="sf-mono sf-hint">{s}</span></li>)}</ul>

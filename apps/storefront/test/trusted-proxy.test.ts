@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { clientIp, effectiveHost, isTrustedPeer, parseIp, parseTrustedProxies, peerFromStamp } from '../src/lib/trusted-proxy';
+import { canonicalIp, clientIp, effectiveHost, isTrustedPeer, parseIp, parseTrustedProxies, peerFromStamp } from '../src/lib/trusted-proxy';
 
 test('parse IPs and CIDRs (v4, v6, mapped, junk ignored)', () => {
   assert.equal(parseIp('::ffff:10.1.2.3')?.v, 4);
@@ -55,4 +55,21 @@ test('client IP for CAPI: rightmost untrusted hop; client-supplied XFF on the le
   assert.equal(clientIp({ peer: '127.0.0.1', forwardedFor: '10.0.0.5' }, t), '10.0.0.5');
   // junk → null
   assert.equal(clientIp({ peer: '127.0.0.1', forwardedFor: 'not-an-ip' }, t), null);
+});
+
+test('QA r3 #2: every spelling of an address is normalised before trust checks and on output', () => {
+  const t = parseTrustedProxies('loopback,10.0.0.0/8,fd00::/8');
+  // IPv4-mapped (dotted + hex), expanded and compressed loopback → trusted like 127.0.0.1 / ::1
+  for (const peer of ['::ffff:7f00:1', '::FFFF:7F00:0001', '0:0:0:0:0:ffff:7f00:1', '0:0:0:0:0:0:0:1', '0000:0000:0000:0000:0000:0000:0000:0001', '[::1]', '::ffff:0a00:0005', 'FD00:0:0:0:0:0:0:1']) assert.ok(isTrustedPeer(peer, t), peer);
+  for (const peer of ['::ffff:a9fe:a9fe', '64:ff9b::7f00:1', '::7f00:1', '2002:7f00:1::', '127.1', '0x7f.0.0.1']) assert.ok(!isTrustedPeer(peer, t), peer);
+  assert.equal(canonicalIp('::ffff:a9fe:a9fe'), '169.254.169.254');
+  assert.equal(canonicalIp('::ffff:7f00:1'), '127.0.0.1');
+  assert.equal(canonicalIp('0:0:0:0:0:0:0:1'), '::1');
+  assert.equal(canonicalIp('2001:0DB8:0000:0000:0001:0000:0000:0001'), '2001:db8::1:0:0:1');
+  assert.equal(canonicalIp('2606:4700:0:0:0:0:0:1111'), '2606:4700::1111');
+  assert.equal(canonicalIp('1:0:2:3:4:5:6:7'), '1:0:2:3:4:5:6:7', 'a single zero group is not compressed');
+  assert.equal(canonicalIp('::'), '::');
+  // the IP handed to CAPI is canonical, whichever form the proxy wrote
+  assert.equal(clientIp({ peer: '::ffff:7f00:1', forwardedFor: '::ffff:cb00:7109' }, t), '203.0.113.9');
+  assert.equal(clientIp({ peer: '0:0:0:0:0:0:0:1', forwardedFor: '2606:4700:0:0:0:0:0:1111' }, t), '2606:4700::1111');
 });

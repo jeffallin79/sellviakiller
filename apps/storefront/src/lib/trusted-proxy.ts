@@ -52,6 +52,26 @@ export function parseIp(raw: string | null | undefined): { v: 4 | 6; n: bigint }
   return { v: 6, n: b };
 }
 
+/** Canonical text form (RFC 5952 for IPv6, IPv4-mapped → dotted IPv4), so every spelling of one address compares equal. */
+export function canonicalIp(raw: string | null | undefined): string | null {
+  const p = parseIp(raw);
+  if (!p) return null;
+  if (p.v === 4) return [24n, 16n, 8n, 0n].map((sh) => String((p.n >> sh) & 0xffn)).join('.');
+  const g = Array.from({ length: 8 }, (_, i) => Number((p.n >> BigInt(16 * (7 - i))) & 0xffffn));
+  let best = -1;
+  let len = 0;
+  for (let i = 0; i < 8; ) {
+    if (g[i] !== 0) { i++; continue; }
+    let j = i;
+    while (j < 8 && g[j] === 0) j++;
+    if (j - i > len && j - i >= 2) { best = i; len = j - i; }
+    i = j;
+  }
+  const hex = g.map((x) => x.toString(16));
+  if (best < 0) return hex.join(':');
+  return `${hex.slice(0, best).join(':')}::${hex.slice(best + len).join(':')}`;
+}
+
 export function parseTrustedProxies(env: string | undefined): Cidr[] {
   const out: Cidr[] = [];
   for (const raw of String(env ?? '').split(',').map((x) => x.trim()).filter(Boolean)) {
@@ -111,6 +131,5 @@ export function clientIp(h: { peer: string | null; forwardedFor: string | null }
   const chain = [...String(h.forwardedFor ?? '').split(',').map((x) => x.trim()).filter(Boolean), h.peer];
   let i = chain.length - 1;
   while (i > 0 && isTrustedPeer(chain[i], trusted)) i--;
-  const ip = chain[i].replace(/^\[|\]$/g, '');
-  return parseIp(ip) ? ip.replace(/^::ffff:/i, '') : null;
+  return canonicalIp(chain[i]);
 }

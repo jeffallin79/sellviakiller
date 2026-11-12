@@ -23,6 +23,8 @@ export function ShopFrame({ slug, store, products, children }: { slug: string; s
   const name = store?.name ?? slug;
   return (
     <ShopCtx.Provider value={{ openCart: () => setOpen(true) }}>
+      {/* Consent first: on desktop it's an in-flow strip above the header, so it never covers content */}
+      <ShopPixel storeId={store?.id} />
       <header className="shophead">
         <div className="wrap shophead__in">
           <Link href={href()} className="wordmark"><span className="wordmark__dot" aria-hidden="true" />{name}</Link>
@@ -45,7 +47,6 @@ export function ShopFrame({ slug, store, products, children }: { slug: string; s
           <span className="sf-muted"><Icon name="secure" size={16} /> Card payments by Stripe · Shop built on StoreForge</span>
         </div>
       </footer>
-      <ShopPixel storeId={store?.id} />
       {open && <CartDrawer slug={slug} products={products ?? []} onClose={() => setOpen(false)} />}
     </ShopCtx.Provider>
   );

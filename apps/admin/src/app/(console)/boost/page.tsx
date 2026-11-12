@@ -214,7 +214,7 @@ function Campaign({ c, onAct, busy }: { c: any; onAct: (id: string, a: 'pause' |
         <div><span className="sf-kpi__label">Sales</span><strong className="sf-num"><Money cents={c.totals.revenueCents} /></strong></div>
         <div><span className="sf-kpi__label">ROAS</span><strong className="sf-num">{c.totals.roas == null ? '—' : `${c.totals.roas}×`}</strong></div>
         <div><span className="sf-kpi__label">Clicks</span><strong className="sf-num">{c.totals.clicks.toLocaleString()}</strong></div>
-        <div><span className="sf-kpi__label">Fuel charged</span><strong className="sf-num"><Money cents={c.totals.fuelChargedCents} /></strong></div>
+        {c.totals.fuelChargedCents > 0 && <div><span className="sf-kpi__label">Fuel charged</span><strong className="sf-num"><Money cents={c.totals.fuelChargedCents} /></strong></div>}
       </div>
       {days.length > 1 && <Bars values={days.map((d: any) => d.spendCents)} labels={days.map((d: any) => d.date.slice(5))} hotIndex={days.length - 1} />}
       <div className="sf-row" style={{ gap: 8 }}>
@@ -362,7 +362,10 @@ function BoostInner() {
             <section className="sf-card">
               <h3 style={{ marginTop: 0 }}>What it costs</h3>
               <p style={{ margin: '0 0 8px' }}>Ad spend: billed by Meta to <strong>your</strong> ad account.</p>
-              <p style={{ margin: 0 }}>Boost fee: <strong className="sf-num">{o.feePct}%</strong> of spend{o.feePct > 0 ? ', from Ad Fuel' : ''}. Platform-managed ads (coming later) are <span className="sf-num">{o.managedFeePct}%</span> and run on Ad Fuel.</p>
+              {/* This card is about YOUR (owned) account only: the managed-mode fee is shown where managed Boost is offered, never here (QA r3 #5) */}
+              <p style={{ margin: 0 }}>{o.feePct > 0
+                ? <>Boost fee: <strong className="sf-num">{o.feePct}%</strong> of spend, from Ad Fuel.</>
+                : <>Boost fee: <strong>none</strong>. StoreForge doesn&apos;t charge for ads on your own account.</>}</p>
               <hr className="sf-divider" />
               <Link href="/fuel" className="sf-btn sf-btn--sm sf-btn--quiet"><Icon name="fuel" size={16} />Ad Fuel wallet</Link>
             </section>

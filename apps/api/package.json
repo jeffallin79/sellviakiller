@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "nest build",
-    "dev": "nest start --watch",
+    "dev": "NODE_ENV=${NODE_ENV:-development} nest start --watch",
     "start": "node dist/main.js",
     "lint": "echo ok",
     "test": "node scripts-test.mjs",
@@ -25,6 +25,7 @@
     "class-validator": "^0.14.1",
     "cookie-parser": "^1.4.7",
     "ioredis": "^5.4.2",
+    "ipaddr.js": "^2.2.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "stripe": "^23.1.0",

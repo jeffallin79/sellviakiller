@@ -7,9 +7,11 @@ import { AppModule } from './app.module';
 import { auth } from './auth/better-auth';
 import { ZodValidationFilter } from './common/zod.filter';
 import { assertTlsConfig } from './domains/tls';
+import { assertTokenKey } from './ads/token-vault';
 
 async function bootstrap() {
   assertTlsConfig(); // e.g. caddy without DOMAIN_TLS_ASK_TOKEN → refuse to start
+  assertTokenKey(); // ADS_TOKEN_KEY required outside NODE_ENV=development|test
   const app = await NestFactory.create(AppModule, { rawBody: true });
   const expressApp = app.getHttpAdapter().getInstance();
 

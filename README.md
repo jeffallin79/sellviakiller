@@ -249,6 +249,26 @@ Go-live checklist (Meta):
 - Test: set a Test Events code on the store, place an order, and check Events Manager → Test events: server
   and browser Purchase, deduplicated.
 
+### Slice 3 handoff notes (QA round 3)
+- **The Ad Fuel wallet is org-wide**, not per store: one balance for all of an organization's stores.
+  Refunds and *Charged today* are org-wide too, and ledger rows name the **campaign** (e.g. "Rugged Lamp 26 ·
+  Boost · Nov 11"), not the store. Per-store spend is on each store's Boost page.
+- **Set `API_PUBLIC_URL` and `ADMIN_URL`** to the exact hosts the browser uses. The Meta `redirect_uri` is
+  `{API_PUBLIC_URL}/api/boost/meta/callback`, and the callback sends the merchant on to `{ADMIN_URL}/boost`.
+  If they are unset or use another host (127.0.0.1 vs localhost), the callback lands on the wrong host and
+  the admin session cookie and CORS no longer match.
+- **`TRUSTED_PROXIES` only applies when the storefront runs through `pnpm start` (= `node server.mjs`)**.
+  That server stamps the real TCP peer for the middleware. `next start`/`next dev` have no peer stamp, so
+  XFF is ignored and CAPI gets no client IP (safe, just less match quality).
+- **`ADS_TOKEN_KEY` is required** unless `NODE_ENV=development|test`, and the API refuses to start without it.
+  The dev fallback is derived from `BETTER_AUTH_SECRET`, so rotating that secret makes stored Meta tokens
+  undecryptable and merchants must reconnect. Generate the key once (`openssl rand -base64 32`) and keep it with
+  the other secrets. `pnpm dev` sets `NODE_ENV=development`.
+- Crash between "paid" and the CAPI row: the order sweeper (every `ORDER_SWEEP_MS`) re-creates the Purchase for
+  paid + consented orders up to ~7 days old, with the same `event_id` (still deduplicated) and the order time as `event_time`.
+- Private-address checks (TLS probe, trusted proxies) canonicalise IPs first: IPv4-mapped (dotted or hex),
+  expanded/compressed IPv6, NAT64/6to4/Teredo, non-canonical IPv4 (`127.1`, `0x7f…`) are all handled.
+
 ## Dependency audit (`pnpm audit --prod`)
 
 QA round 1 found 42 (21 high, 2 critical). Fixed by upgrades: `next` ^15.5.29 (Image Optimizer RCE; admin + storefront, and the Image Optimization API is disabled with `images.unoptimized` and no `remotePatterns`), `better-auth` ^1.7.22, `zod` ^4.6.6. Transitive fixes are version-scoped `pnpm.overrides` in the root `package.json` (each only rewrites versions below the patched one): `sharp` ≥0.35.5, `multer` ≥2.1.0, `body-parser` ≥1.20.6, `qs` ≥6.15.2, `js-yaml` 4.x ≥4.1.1, `lodash` ≥4.18.0, `postcss` ≥8.5.10, `source-map-js` ≥1.2.2, `deepmerge-ts` ≥8, `file-type` ≥21.3.1, `zod` 4.x ≥4.6.6.

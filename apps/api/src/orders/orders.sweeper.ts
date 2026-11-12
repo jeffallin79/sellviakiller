@@ -6,6 +6,7 @@ import { EmailService } from '../email/email.service';
 /**
  * Crash recovery, every ORDER_SWEEP_MS (default 60 s; 0 or NODE_ENV=test disables):
  *   - PAID orders with no fulfilment → route (and missing confirmation emails → outbox)
+ *   - paid + consented orders with no ConversionEvent → CAPI Purchase (same event_id)
  *   - QUEUED emails nobody is delivering → send
  *   - order refunds stuck pending/unknown → reconcile against Stripe (every 5th tick)
  * All steps are idempotent and claim rows, so several API instances may run it.
@@ -32,7 +33,7 @@ export class OrdersSweeper implements OnModuleInit, OnModuleDestroy {
     this.running = true;
     try {
       const p = await this.orders.sweepPaid();
-      if (p.routed.length || p.confirmed.length) this.logger.warn(`recovered orders: routed ${p.routed.join(',') || '-'}; confirmation queued ${p.confirmed.join(',') || '-'}`);
+      if (p.routed.length || p.confirmed.length || p.capi.length) this.logger.warn(`recovered orders: routed ${p.routed.join(',') || '-'}; confirmation queued ${p.confirmed.join(',') || '-'}; CAPI queued ${p.capi.join(',') || '-'}`);
       const e = await this.emails.sweepOutbox();
       if (e.length) this.logger.log(`outbox: resent ${e.length}`);
       if (this.ticks++ % 5 === 0) {

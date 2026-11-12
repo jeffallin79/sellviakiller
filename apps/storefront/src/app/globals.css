@@ -94,6 +94,14 @@
 }
 
 /* Cookie consent (slice 3) */
-.consent { position: fixed; z-index: 40; left: 16px; right: 16px; bottom: 16px; margin: 0 auto; max-width: 640px; display: flex; gap: 14px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 14px 16px; background: rgb(var(--sf-surface)); border: var(--sf-stroke) solid rgb(var(--sf-line)); border-radius: var(--sf-radius); box-shadow: 6px 6px 0 rgb(var(--sf-scrim) / 0.25); font-size: 0.88rem; }
-.consent p { margin: 0; flex: 1 1 280px; }
-.consent__btns { display: flex; gap: 8px; }
+/* Consent: phones → bottom sheet (footer gets room so nothing stays hidden); desktop → in-flow strip above the header, never over content */
+.consent { position: fixed; z-index: 40; left: 12px; right: 12px; bottom: 12px; background: rgb(var(--sf-surface)); border: var(--sf-stroke) solid rgb(var(--sf-line)); border-radius: var(--sf-radius); box-shadow: 6px 6px 0 rgb(var(--sf-scrim) / 0.25); font-size: 0.88rem; }
+.consent__in { display: flex; gap: 12px 16px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding-top: 14px; padding-bottom: 14px; }
+.consent p { margin: 0; flex: 1 1 260px; text-wrap: pretty; }
+.consent__btns { display: flex; gap: 8px; flex-shrink: 0; }
+body:has(.consent) .shopfoot { padding-bottom: 168px; }
+@media (min-width: 760px) {
+  .consent { position: static; border-width: 0 0 var(--sf-stroke); border-radius: 0; box-shadow: none; }
+  .consent__in { padding-top: 10px; padding-bottom: 10px; flex-wrap: nowrap; }
+  body:has(.consent) .shopfoot { padding-bottom: 34px; }
+}

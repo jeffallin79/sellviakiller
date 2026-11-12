@@ -84,7 +84,7 @@ export class ConversionsService {
   }
 
   /** Called once per order when it becomes PAID. Never throws (payment flow must not depend on ads). */
-  async orderPaid(orderId: string) {
+  async orderPaid(orderId: string, eventTime = new Date()) {
     try {
       const order = await prisma.order.findUnique({ where: { id: orderId }, include: { lines: true } });
       if (!order) return null;
@@ -98,7 +98,7 @@ export class ConversionsService {
           row = await prisma.conversionEvent.create({ data: { ...base, metaStatus: 'skipped', lastError: 'no_consent' } });
           return row;
         }
-        row = await prisma.conversionEvent.create({ data: { ...base, metaStatus: 'pending', payload: this.buildEvent(order, attr, new Date()) as any } });
+        row = await prisma.conversionEvent.create({ data: { ...base, metaStatus: 'pending', payload: this.buildEvent(order, attr, eventTime) as any } });
       } catch (e) {
         if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') return null; // already recorded (replay)
         throw e;
@@ -113,6 +113,37 @@ export class ConversionsService {
       this.logger.error(`CAPI event for order ${orderId} not recorded: ${e?.message ?? e}`);
       return null;
     }
+  }
+
+  /**
+   * Sweeper (QA r3 #1): a crash between markPaid and orderPaid leaves a paid, consented order with
+   * no ConversionEvent. Recreate it (same event_id, so still deduped with the browser Pixel), with
+   * event_time = when the order was placed. Meta accepts website events up to 7 days old.
+   */
+  async sweepMissing(now = new Date(), graceMs = 2 * 60_000) {
+    const accounts = await prisma.adAccount.findMany({ where: { channel: 'META', mode: 'OWNED', status: 'active', pixelId: { not: null } }, select: { storeId: true } });
+    if (!accounts.length) return [];
+    const orders = await prisma.order.findMany({
+      where: {
+        storeId: { in: accounts.map((a) => a.storeId) },
+        status: { notIn: ['PENDING_PAYMENT', 'CANCELLED', 'FAILED'] },
+        providerPaymentId: { not: null },
+        attribution: { path: ['consent'], equals: true },
+        createdAt: { gt: new Date(now.getTime() - 7 * 24 * 3600_000 + 3600_000) },
+        updatedAt: { lt: new Date(now.getTime() - graceMs) },
+      },
+      select: { id: true, createdAt: true },
+      orderBy: { createdAt: 'asc' },
+      take: 200,
+    });
+    if (!orders.length) return [];
+    const have = new Set((await prisma.conversionEvent.findMany({ where: { eventId: { in: orders.map((o) => eventIdFor(o.id)) } }, select: { eventId: true } })).map((e) => e.eventId));
+    const out: string[] = [];
+    for (const o of orders) {
+      if (have.has(eventIdFor(o.id))) continue;
+      if (await this.orderPaid(o.id, o.createdAt)) out.push(o.id);
+    }
+    return out;
   }
 
   /**

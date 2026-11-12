@@ -5,6 +5,7 @@
  *            confirm issuance by making a real HTTPS request (which also triggers it).
  *  - vercel: Vercel Domains API (DOMAIN_PROVIDER_TOKEN + VERCEL_PROJECT_ID [+ VERCEL_TEAM_ID]).
  */
+import ipaddr from 'ipaddr.js';
 import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
 
@@ -37,29 +38,45 @@ export function assertTlsConfig(env: NodeJS.ProcessEnv = process.env) {
   }
 }
 
-/** Addresses our probe must never connect to: loopback, private, link-local (cloud metadata), CGNAT, multicast, reserved. */
+/**
+ * Addresses our probe must never connect to. The input is canonicalised with ipaddr.js first, so
+ * every spelling of an address gets the same answer (QA r3 #2): expanded / compressed / upper-case
+ * IPv6 (0:0:0:0:0:0:0:1 = ::1), IPv4-mapped in dotted or hex form (::ffff:7f00:1 = 127.0.0.1,
+ * ::ffff:a9fe:a9fe = 169.254.169.254), zone ids. Non-canonical IPv4 spellings (127.1, 0x7f.0.0.1,
+ * 0177.0.0.1) are refused outright (node's isIP rejects them; libc would resolve them).
+ *
+ * IPv4: blocked = this-net, private, loopback, link-local (cloud metadata), CGNAT, multicast,
+ * broadcast, 240/4, 192.0.0/24, 198.18/15. The TEST-NETs (192.0.2/24, 198.51.100/24,
+ * 203.0.113/24) are allowed: they're unroutable on the internet, so harmless, and dev uses them.
+ * IPv6: only global unicast is allowed. Blocked as well: everything that embeds or tunnels to an
+ * IPv4 address we can't vet (IPv4-compatible ::/96, NAT64 64:ff9b::/96 and 64:ff9b:1::/48, 6to4
+ * 2002::/16, Teredo 2001::/32, SIIT), plus ULA, link/site-local, multicast and documentation.
+ */
+const V4_TEST_NETS = ['192.0.2.0/24', '198.51.100.0/24', '203.0.113.0/24'].map((c) => ipaddr.IPv4.parseCIDR(c));
+const V4_BLOCKED = new Set(['unspecified', 'broadcast', 'multicast', 'linkLocal', 'loopback', 'carrierGradeNat', 'private', 'reserved', 'as112', 'amt']);
+export function canonicalIp(ip: string): string | null {
+  const s = String(ip ?? '').trim().replace(/^\[|\]$/g, '');
+  if (!isIP(s)) return null;
+  try {
+    return ipaddr.process(s.replace(/%.*$/, '')).toString(); // IPv4-mapped → IPv4; IPv6 compressed lower-case
+  } catch {
+    return null;
+  }
+}
 export function isBlockedAddress(ip: string): boolean {
-  const v = isIP(ip);
-  if (v === 4) {
-    const [a, b] = ip.split('.').map(Number);
-    return (
-      a === 0 || a === 10 || a === 127 || a >= 224 || // this-net, private, loopback, multicast + reserved
-      (a === 100 && b >= 64 && b <= 127) || // CGNAT
-      (a === 169 && b === 254) || // link-local / metadata
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      (a === 192 && b === 0) || // 192.0.0.0/24 protocol assignments (and 192.0.2/24 docs below)
-      (a === 198 && (b === 18 || b === 19)) // benchmarking
-    );
+  const c = canonicalIp(ip);
+  if (!c) return true; // not an IP → never connect
+  const a = ipaddr.parse(c);
+  if (a.kind() === 'ipv4') {
+    const v4 = a as ipaddr.IPv4;
+    if (V4_TEST_NETS.some((n) => v4.match(n))) return false;
+    return V4_BLOCKED.has(v4.range());
   }
-  if (v === 6) {
-    const x = ip.toLowerCase();
-    if (x === '::' || x === '::1') return true;
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(x);
-    if (mapped) return isBlockedAddress(mapped[1]);
-    return /^(fc|fd|fe[89ab]|ff)/.test(x) || x.startsWith('64:ff9b:') || x.startsWith('2001:db8');
-  }
-  return true; // not an IP → never connect
+  const v6 = a as ipaddr.IPv6;
+  const p = v6.parts;
+  if (p.slice(0, 6).every((x) => x === 0)) return true; // ::/96 (unspecified, loopback, IPv4-compatible)
+  if (p[0] >= 0xfec0 && p[0] <= 0xfeff) return true; // deprecated site-local fec0::/10
+  return v6.range() !== 'unicast';
 }
 const allowPrivateProbe = () => process.env.DOMAIN_PROBE_ALLOW_PRIVATE === 'true' && process.env.NODE_ENV !== 'production';
 
@@ -93,7 +110,7 @@ export async function probeHttps(host: string, ip: string | null | undefined, ti
     const finish = (s: TlsState) => { if (!done) { done = true; resolve(s); } };
     const req = requestImpl(
       {
-        host: ip, // connect here, never re-resolve
+        host: canonicalIp(ip) ?? ip, // connect here (canonical form), never re-resolve
         port: 443,
         servername: host, // SNI; also the name the certificate is checked against
         method: 'HEAD',

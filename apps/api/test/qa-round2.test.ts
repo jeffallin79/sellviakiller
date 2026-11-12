@@ -11,7 +11,7 @@ import { OrdersService } from '../src/orders/orders.service';
 import { RefundsService } from '../src/orders/refunds.service';
 import { EmailService, headerLine } from '../src/email/email.service';
 import { setEmailTransportForTests, type EmailTransport, type OutgoingEmail } from '../src/email/transport';
-import { assertTlsConfig, isBlockedAddress, probeHttps, setTlsForTests, type TlsProvider, type TlsState } from '../src/domains/tls';
+import { assertTlsConfig, canonicalIp, isBlockedAddress, probeHttps, setTlsForTests, type TlsProvider, type TlsState } from '../src/domains/tls';
 import { setDnsForTests, type DnsLookup, type DnsSnapshot } from '../src/domains/dns';
 import { DomainsService } from '../src/domains/domains.service';
 import { DomainsController } from '../src/domains/domains.controller';
@@ -209,6 +209,28 @@ test('#4 caddy without DOMAIN_TLS_ASK_TOKEN refuses to start; tls-ask fails clos
   }
 });
 
+test('QA r3 #2 blocklist is checked on the canonical address: hex IPv4-mapped, expanded/compressed IPv6, NAT64, 6to4, odd IPv4 spellings', () => {
+  const blocked = [
+    // IPv4-mapped, dotted + hex, any case, fully expanded
+    '::ffff:a9fe:a9fe', '::FFFF:A9FE:A9FE', '::ffff:7f00:1', '::ffff:0a00:0001', '::ffff:c0a8:0101', '0:0:0:0:0:ffff:7f00:1', '0000:0000:0000:0000:0000:ffff:7f00:0001', '::ffff:169.254.169.254', '[::ffff:7f00:1]',
+    // loopback / unspecified spelled out
+    '0:0:0:0:0:0:0:1', '0000:0000:0000:0000:0000:0000:0000:0001', '::0:1', '0::1', '0:0:0:0:0:0:0:0', '::',
+    // IPv4-compatible (deprecated), NAT64 (well-known + local-use), 6to4, Teredo, SIIT
+    '::7f00:1', '::127.0.0.1', '64:ff9b::7f00:1', '64:ff9b::a9fe:a9fe', '64:ff9b::808:808', '64:ff9b:1::1', '2002:7f00:1::', '2002:0808:0808::1', '2001:0:4136:e378:8000:63bf:3fff:fdd2', '::ffff:0:7f00:1',
+    // ULA / link-local (with zone) / site-local / multicast / documentation, any spelling
+    'FD00::1', 'fd12:3456:789a::1', 'fe80::1%eth0', 'FE80:0:0:0:0:0:0:1', 'fec0::1', 'ff02::1', '2001:db8::1', '2001:0DB8:0000::1',
+    // IPv4 spellings libc would accept but are not canonical → refused
+    '127.1', '0x7f.0.0.1', '0177.0.0.1', '2130706433', '127.000.000.001', ' 10.0.0.1x',
+    // IPv4 ranges
+    '255.255.255.255', '240.0.0.1', '198.18.0.1', '192.0.0.8', '100.127.255.255', '172.31.255.255',
+  ];
+  for (const ip of blocked) assert.ok(isBlockedAddress(ip), ip);
+  for (const ip of ['8.8.8.8', '1.1.1.1', '203.0.113.10', '2606:4700::1111', '2606:4700:0:0:0:0:0:1111', '2A00:1450:4001:82B::200E', '::ffff:8.8.8.8', '::ffff:808:808', '172.32.0.1', '100.128.0.1']) assert.ok(!isBlockedAddress(ip), ip);
+  assert.equal(canonicalIp('::ffff:a9fe:a9fe'), '169.254.169.254');
+  assert.equal(canonicalIp('0:0:0:0:0:0:0:1'), '::1');
+  assert.equal(canonicalIp('2606:4700:0:0:0:0:0:1111'), '2606:4700::1111');
+});
+
 test('#4 probe: private / loopback / metadata addresses are never contacted', async () => {
   for (const ip of ['127.0.0.1', '10.1.2.3', '172.20.0.5', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '224.0.0.1', '::1', 'fd00::1', 'fe80::1', '::ffff:127.0.0.1', 'nope']) {
     assert.ok(isBlockedAddress(ip), ip);
@@ -295,4 +317,26 @@ test('#6 DB CHECK: 0 <= refundedCents <= totalCents', async () => {
   await assert.rejects(() => prisma.order.update({ where: { id: orderId }, data: { refundedCents: o.totalCents + 1 } }), /Order_refunded_within_paid|check constraint/i);
   await assert.rejects(() => prisma.order.update({ where: { id: orderId }, data: { refundedCents: -1 } }), /Order_refunded_within_paid|check constraint/i);
   await prisma.order.update({ where: { id: orderId }, data: { refundedCents: o.totalCents } });
+});
+
+test('QA r3 #4 ADS_TOKEN_KEY: required outside development/test; dev fallback only there', async () => {
+  const { assertTokenKey, sealToken, openToken } = await import('../src/ads/token-vault');
+  const saved = { env: process.env.NODE_ENV, key: process.env.ADS_TOKEN_KEY };
+  try {
+    delete process.env.ADS_TOKEN_KEY;
+    for (const env of ['production', 'staging', undefined]) {
+      if (env === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = env;
+      assert.throws(() => assertTokenKey(), /ADS_TOKEN_KEY is required/, String(env));
+    }
+    process.env.NODE_ENV = 'development';
+    assert.doesNotThrow(() => assertTokenKey());
+    process.env.NODE_ENV = 'production';
+    process.env.ADS_TOKEN_KEY = Buffer.alloc(32, 7).toString('base64');
+    assert.equal(openToken(sealToken('tok')), 'tok');
+    process.env.ADS_TOKEN_KEY = Buffer.alloc(16, 7).toString('base64');
+    assert.throws(() => assertTokenKey(), /32 bytes/);
+  } finally {
+    if (saved.env === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = saved.env;
+    if (saved.key === undefined) delete process.env.ADS_TOKEN_KEY; else process.env.ADS_TOKEN_KEY = saved.key;
+  }
 });

@@ -28,11 +28,13 @@ export function ShopPixel({ storeId }: { storeId: string | null | undefined }) {
 
   if (consent !== null) return null; // loading, or already chosen
   return (
-    <div className="consent" role="dialog" aria-live="polite" aria-label="Cookies">
-      <p>We use cookies to measure our ads and show you relevant ones. Essential cookies (your bag) are always on.</p>
-      <div className="consent__btns">
-        <button type="button" className="sf-btn sf-btn--sm sf-btn--quiet" onClick={() => setConsent('denied')}>Essential only</button>
-        <button type="button" className="sf-btn sf-btn--sm sf-btn--brand" onClick={() => setConsent('granted')}>Accept</button>
+    <div className="consent" role="region" aria-live="polite" aria-label="Cookies">
+      <div className="wrap consent__in">
+        <p>We use cookies to measure our ads and show you relevant ones. Essential cookies (your bag) are always on.</p>
+        <div className="consent__btns">
+          <button type="button" className="sf-btn sf-btn--sm sf-btn--quiet" onClick={() => setConsent('denied')}>Essential only</button>
+          <button type="button" className="sf-btn sf-btn--sm sf-btn--brand" onClick={() => setConsent('granted')}>Accept</button>
+        </div>
       </div>
     </div>
   );

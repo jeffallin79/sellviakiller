@@ -243,7 +243,9 @@ export class OrdersService {
       take: 50,
     });
     for (const o of unconfirmed) await this.emails.orderEvent('ORDER_CONFIRMED', o.id);
-    return { routed: unrouted.map((o) => o.id), confirmed: unconfirmed.map((o) => o.id) };
+    // 3) Paid + consented orders whose CAPI row was lost (crash between markPaid and orderPaid)
+    const capi = await this.conversions.sweepMissing(now, graceMs);
+    return { routed: unrouted.map((o) => o.id), confirmed: unconfirmed.map((o) => o.id), capi };
   }
 
   async listForStore(storeId: string) {

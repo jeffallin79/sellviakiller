@@ -259,6 +259,33 @@ test('CAPI: no consent → nothing sent (row marked skipped); no Pixel selected 
   assert.equal(await prisma.conversionEvent.count({ where: { orderId: o2 } }), 0);
 });
 
+test('QA r3 #1 sweeper: paid + consented order with no ConversionEvent (crash after markPaid) gets its CAPI Purchase, once', async () => {
+  const { store, sp } = await connected();
+  const lost = await paidOrder(store, sp.id, { consent: true, fbp: 'fb.1.1.9' });
+  const noConsent = await paidOrder(store, sp.id, { consent: false });
+  const fresh = await paidOrder(store, sp.id, { consent: true });
+  // simulate the crash: the rows were never written
+  await prisma.conversionEvent.deleteMany({ where: { orderId: { in: [lost, noConsent, fresh] } } });
+  const placed = new Date(Date.now() - 30 * 60_000);
+  const ts = placed.toISOString().replace('T', ' ').replace('Z', ''); // timestamp(3) columns hold UTC
+  await prisma.$executeRaw`UPDATE "Order" SET "createdAt" = ${ts}::timestamp, "updatedAt" = ${ts}::timestamp WHERE id IN (${lost}, ${noConsent})`;
+  const r1 = await orders.sweepPaid();
+  await capi.idle();
+  assert.deepEqual(r1.capi, [lost], 'only the paid + consented order past the grace period');
+  const ev = await prisma.conversionEvent.findUniqueOrThrow({ where: { eventId: `order_${lost}` } });
+  assert.deepEqual([ev.metaStatus, ev.sentMeta], ['sent', true]);
+  assert.equal((ev.payload as any).event_time, Math.floor(placed.getTime() / 1000), 'event_time = when the order was placed');
+  assert.equal(await prisma.conversionEvent.count({ where: { orderId: { in: [noConsent, fresh] } } }), 0);
+  const sent = () => meta.testEvents(PIXEL).filter((e) => e.eventId === `order_${lost}` && e.source === 'server').length;
+  const afterFirst = sent();
+  // second sweep (or another instance) → nothing new sent
+  const r2 = await orders.sweepPaid();
+  await capi.idle();
+  assert.deepEqual(r2.capi, []);
+  assert.equal(sent(), afterFirst);
+  assert.equal(await prisma.conversionEvent.count({ where: { orderId: lost } }), 1);
+});
+
 test('CAPI: transient Meta error is retried with backoff (same event_id); a bad request fails for good', async () => {
   const { store, sp } = await connected();
   meta.failNext.sendEvents = new MetaApiError('Service temporarily unavailable', { status: 503, isTransient: true });
