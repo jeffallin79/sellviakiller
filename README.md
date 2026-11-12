@@ -51,13 +51,14 @@ Path fallback works without hosts: `http://localhost:3000/s/demo`.
 
 ## Demo path (no API keys)
 
-1. Admin http://localhost:3001/signup — create merchant
-2. Billing → Subscribe **Starter $29** (stub activates without `STRIPE_SECRET_KEY`)
-3. Stores → create slug `demo`
-4. Catalog → select products → **1-click import**
-5. Storefront http://localhost:3000/s/demo → add to cart → checkout (stub marks PAID)
-6. Admin Orders → Approve fulfillment → CJ stub returns tracking
-7. Export CSV: `/api/export/products.csv` and `/api/export/orders.csv`
+1. Admin http://localhost:3001/signup → **Launchpad** (setup tasks: plan, payouts, store, products, first order)
+2. **Billing** → choose **Starter $29** (stub activates without `STRIPE_SECRET_KEY`) · Launchpad → **Set up payouts** (stub)
+3. **Stores** → create slug `demo`
+4. **Shelf** → tick products → **Add to store** (cost, your price at +50%, what you keep, real ETA)
+5. Storefront http://localhost:3000/s/demo → add to bag → checkout (stub marks PAID, no card)
+6. **Dispatch** → **Send to supplier** → CJ stub returns tracking → SHIPPED
+7. **Ad Fuel** shows the wallet (top-up/refund are API-only for now)
+8. Export CSV: Shelf/Dispatch **Export CSV** (`/api/export/products.csv`, `/api/export/orders.csv`)
 
 Soft-delete stores from Stores page — **never hard-deletes** on cancel.
 
@@ -160,3 +161,16 @@ The second migration renames the Phase 0 payment columns to provider-neutral one
 - No hard-coded colours outside `tokens.css`: root `eslint.config.mjs` (TS/TSX) and `packages/ui/scripts/check-colors.mjs` (CSS) run in each app's `pnpm lint`.
 - Admin routes: `/launchpad`, `/shelf`, `/dispatch`, `/boost` (placeholder until ad platforms approve), `/fuel` (Ad Fuel), `/stores`, `/billing`; old `/dashboard/*` URLs redirect.
 - Storefront: `/s/[slug]` (shop), `/s/[slug]/p/[id]` (product), cart drawer + checkout, `/checkout/complete`.
+- Fonts (OFL 1.1) and icons (MIT): see `NOTICE` and `licenses/`.
+
+
+
+## Dependency audit (`pnpm audit --prod`)
+
+QA round 1 found 42 (21 high, 2 critical). Fixed by upgrades: `next` ^15.5.29 (Image Optimizer RCE; admin + storefront, and the Image Optimization API is disabled with `images.unoptimized` and no `remotePatterns`), `better-auth` ^1.7.22, `zod` ^4.6.6. Transitive fixes are version-scoped `pnpm.overrides` in the root `package.json` (each only rewrites versions below the patched one): `sharp` ≥0.35.5, `multer` ≥2.1.0, `body-parser` ≥1.20.6, `qs` ≥6.15.2, `js-yaml` 4.x ≥4.1.1, `lodash` ≥4.18.0, `postcss` ≥8.5.10, `source-map-js` ≥1.2.2, `deepmerge-ts` ≥8, `file-type` ≥21.3.1, `zod` 4.x ≥4.6.6.
+
+Remaining (accepted, 1 moderate):
+
+| Package | Advisory | Why it stays |
+| --- | --- | --- |
+| `@nestjs/core` 10.4.x | GHSA-36xv-jgw5-4q75, SSE event injection (fixed in 11.1.18) | Only affects `@Sse()` endpoints that put user data in the event `type`/`id`. StoreForge has no SSE endpoints (`grep -r "@Sse" apps/api/src` is empty). The fix needs the NestJS 11 / Express 5 major upgrade, which is planned as its own change rather than mixed into a QA fix. |

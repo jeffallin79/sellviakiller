@@ -1,0 +1,26 @@
+StoreForge
+Copyright (c) 2026 Jeff Allin. All rights reserved (see README "License").
+
+This product bundles third-party fonts and icons under their own licences.
+Full licence texts are in ./licenses/.
+
+Fonts (SIL Open Font License, Version 1.1), self-hosted via Fontsource
+(@fontsource-variable/* 5.3.0, imported by packages/ui/src/fonts.ts):
+
+  Bricolage Grotesque  Copyright 2022 The Bricolage Grotesque Project Authors
+                       (https://github.com/ateliertriay/bricolage)
+                       licenses/OFL-bricolage-grotesque.txt
+  Instrument Sans      Copyright 2022 The Instrument Sans Project Authors
+                       (https://github.com/Instrument/instrument-sans)
+                       licenses/OFL-instrument-sans.txt
+  JetBrains Mono       Copyright 2020 The JetBrains Mono Project Authors
+                       (https://github.com/JetBrains/JetBrainsMono)
+                       licenses/OFL-jetbrains-mono.txt
+
+  The fonts are used unmodified. Under OFL 1.1 they may be bundled and served with the
+  software; they may not be sold by themselves.
+
+Icons (MIT License):
+
+  Phosphor Icons (@phosphor-icons/react)  Copyright (c) 2020 Phosphor Icons
+                       licenses/MIT-phosphor-icons.txt
