@@ -130,7 +130,11 @@ code { font-size: 0.88em; background: rgb(var(--sf-surface-2)); padding: 0.1em 0
 .sf-collage .c3 { inset: 52% 54% 12% 14%; background: rgb(var(--sf-secondary-dark)); border-radius: 50%; clip-path: polygon(50% 0, 82% 8%, 100% 42%, 92% 80%, 56% 100%, 16% 90%, 0 54%, 12% 14%); }
 .sf-collage .c4 { inset: 16% 10% 62% 58%; background: rgb(var(--sf-bg)); clip-path: polygon(0 20%, 100% 0, 92% 100%, 8% 82%); transform: rotate(12deg); }
 
-/* ---------- product photo fallback (paper cut-out) ---------- */
+/* ---------- product photo with paper cut-out fallback ---------- */
+.sf-photo { position: relative; display: block; width: 100%; height: 100%; min-height: 40px; overflow: hidden; }
+.sf-photo > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0; transition: opacity 0.25s var(--sf-ease); }
+.sf-photo--loaded > img { opacity: 1; }
+.sf-photo > .sf-photo-fallback { position: absolute; inset: 0; }
 .sf-photo-fallback { text-decoration: none; position: relative; width: 100%; height: 100%; min-height: 40px; display: grid; place-items: center; overflow: hidden; background: rgb(var(--sf-surface-2)); }
 .sf-photo-fallback__cut { position: absolute; inset: 18% 16%; background: rgb(var(--sf-money)); clip-path: polygon(6% 12%, 38% 0, 72% 8%, 100% 0, 94% 46%, 100% 88%, 60% 100%, 22% 94%, 0 100%, 4% 52%); transform: rotate(-5deg); }
 .sf-photo-fallback:nth-child(odd) .sf-photo-fallback__cut { background: rgb(var(--sf-secondary-dark)); transform: rotate(4deg); }
