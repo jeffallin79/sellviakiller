@@ -8,6 +8,8 @@ import { BillingService } from '../src/billing/billing.service';
 import { FuelService } from '../src/payments/fuel.service';
 import { PayoutsService } from '../src/payments/payouts.service';
 import { WebhookProcessorService } from '../src/payments/webhook-processor.service';
+import { NotificationsService } from '../src/payments/notifications.service';
+import { DisputesService } from '../src/payments/disputes.service';
 import { StripeWebhooksController } from '../src/payments/payments.controller';
 import { FakeStripeProvider, WHSEC, WHSEC_CONNECT, signed, evt, makeOrg, seedPlans, makeStoreWithProduct, checkoutInput, uid } from './helpers';
 
@@ -17,7 +19,8 @@ const orders = new OrdersService(fulfillment);
 const billing = new BillingService();
 const fuel = new FuelService();
 const payouts = new PayoutsService();
-const processor = new WebhookProcessorService(orders, billing, fuel, payouts);
+const notifications = new NotificationsService();
+const processor = new WebhookProcessorService(orders, billing, fuel, payouts, new DisputesService(notifications), notifications);
 const controller = new StripeWebhooksController(processor);
 let fake: FakeStripeProvider;
 
@@ -123,8 +126,10 @@ test('checkout (stripe): amount mismatch never marks paid', async () => {
   const org = await makeOrg({ payout: true });
   const { store, sp } = await makeStoreWithProduct(org.id, 2500);
   const res: any = await orders.checkout(checkoutInput(store.slug, sp.id) as any);
-  const r = await post(evt('checkout.session.completed', { id: `cs_${res.order.id}`, mode: 'payment', payment_status: 'paid', payment_intent: 'pi_cheap', amount_total: 1, currency: 'usd', metadata: { kind: 'store_order', orderId: res.order.id } }));
-  assert.equal(r.handled, 'amount_mismatch');
+  await assert.rejects(
+    () => post(evt('checkout.session.completed', { id: `cs_${res.order.id}`, mode: 'payment', payment_status: 'paid', payment_intent: 'pi_cheap', amount_total: 1, currency: 'usd', metadata: { kind: 'store_order', orderId: res.order.id } })),
+    /does not match/,
+  );
   assert.equal((await prisma.order.findUniqueOrThrow({ where: { id: res.order.id } })).status, 'PENDING_PAYMENT');
 });
 

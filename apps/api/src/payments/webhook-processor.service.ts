@@ -1,11 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { prisma } from '@storeforge/db';
-import { OrdersService } from '../orders/orders.service';
+import { prisma, Prisma } from '@storeforge/db';
+import { OrdersService, PaymentMismatchError } from '../orders/orders.service';
+import { NotificationsService } from './notifications.service';
 import { BillingService } from '../billing/billing.service';
 import { FuelService } from './fuel.service';
 import { PayoutsService } from './payouts.service';
 import { getPaymentProvider, type ProviderEvent, type WebhookEndpoint } from './index';
 import { accountStatus } from './stripe.provider';
+import { DisputesService } from './disputes.service';
+
+/** How long a worker owns an event before another delivery may take over (crash safety). */
+const LEASE_MS = 120_000;
 
 export type WebhookResult = { received: true; duplicate?: boolean; handled: string };
 
@@ -23,19 +28,31 @@ export class WebhookProcessorService {
     private readonly billing: BillingService,
     private readonly fuel: FuelService,
     private readonly payouts: PayoutsService,
+    private readonly disputes: DisputesService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async process(event: ProviderEvent, endpoint: WebhookEndpoint): Promise<WebhookResult> {
     const provider = getPaymentProvider();
-    const existing = await prisma.webhookEvent.findUnique({ where: { id: event.id } });
-    if (existing?.processedAt) return { received: true, duplicate: true, handled: 'duplicate' };
+    const now = new Date();
+    const lease = new Date(now.getTime() + LEASE_MS);
 
-    if (existing) {
-      await prisma.webhookEvent.update({ where: { id: event.id }, data: { attempts: { increment: 1 } } });
-    } else {
-      await prisma.webhookEvent
-        .create({ data: { id: event.id, provider: provider.kind, endpoint, type: event.type } })
-        .catch(() => prisma.webhookEvent.update({ where: { id: event.id }, data: { attempts: { increment: 1 } } }));
+    // Claim. Only the worker that inserts the row (or re-claims a failed, unlocked one) dispatches.
+    // Concurrent identical deliveries hit the unique constraint / held lease → 200, no dispatch.
+    let claimed = false;
+    try {
+      await prisma.webhookEvent.create({ data: { id: event.id, provider: provider.kind, endpoint, type: event.type, lockedUntil: lease } });
+      claimed = true;
+    } catch (e) {
+      if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')) throw e;
+    }
+    if (!claimed) {
+      // A previous attempt failed (lock released) or its worker died (lease expired): Stripe's retry may take it.
+      const r = await prisma.webhookEvent.updateMany({
+        where: { id: event.id, processedAt: null, OR: [{ lockedUntil: null }, { lockedUntil: { lt: now } }] },
+        data: { lockedUntil: lease, attempts: { increment: 1 } },
+      });
+      if (r.count !== 1) return { received: true, duplicate: true, handled: 'duplicate' };
     }
 
     // Test-mode server must never act on live events (and vice versa).
@@ -50,13 +67,19 @@ export class WebhookProcessorService {
       return { received: true, handled };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      await prisma.webhookEvent.update({ where: { id: event.id }, data: { lastError: msg.slice(0, 1000) } });
-      throw e; // non-2xx → Stripe retries
+      if (e instanceof PaymentMismatchError) {
+        const n = { kind: 'payment_mismatch', severity: 'critical' as const, title: 'Payment needs review', body: `A payment for order ${e.orderId.slice(-8).toUpperCase()} doesn't match the order (${e.detail}). The order is on hold; nothing has shipped.`, orderId: e.orderId };
+        await this.notifications.notify({ ...n, organizationId: null, dedupeKey: `p:mismatch:${event.id}` });
+        if (e.organizationId) await this.notifications.notify({ ...n, organizationId: e.organizationId, dedupeKey: `m:mismatch:${event.id}` });
+      }
+      // Unresolved + unlocked: Stripe's retry (non-2xx below) can re-claim it.
+      await prisma.webhookEvent.update({ where: { id: event.id }, data: { lastError: msg.slice(0, 1000), lockedUntil: null } });
+      throw e;
     }
   }
 
   private done(id: string, note: string | null) {
-    return prisma.webhookEvent.update({ where: { id }, data: { processedAt: new Date(), lastError: note } });
+    return prisma.webhookEvent.update({ where: { id }, data: { processedAt: new Date(), lastError: note, lockedUntil: null } });
   }
 
   private async dispatch(event: ProviderEvent, endpoint: WebhookEndpoint): Promise<string> {
@@ -130,8 +153,14 @@ export class WebhookProcessorService {
         return 'payout_account_synced';
       }
       case 'charge.dispute.created':
-        this.logger.warn(`Dispute ${o.id} on charge ${o.charge} (${endpoint}) — handle in Stripe Dashboard`);
-        return 'logged';
+      case 'charge.dispute.updated':
+      case 'charge.dispute.closed':
+      case 'charge.dispute.funds_withdrawn':
+      case 'charge.dispute.funds_reinstated': {
+        if (endpoint === 'connect') this.logger.warn(`Dispute ${o.id} arrived on the Connect endpoint (account ${event.account})`);
+        await this.disputes.apply(o, event.type);
+        return 'dispute_recorded';
+      }
       default:
         return 'ignored';
     }

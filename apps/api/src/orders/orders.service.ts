@@ -1,4 +1,15 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException, Logger } from '@nestjs/common';
+
+/**
+ * A paid event that doesn't match the order (amount, currency or checkout id). The order stays
+ * PENDING_PAYMENT and gets flagged; the webhook is left unprocessed and answered non-2xx so Stripe
+ * keeps retrying while someone looks. Never silently dropped.
+ */
+export class PaymentMismatchError extends ConflictException {
+  constructor(readonly orderId: string, readonly organizationId: string | null, readonly detail: string) {
+    super(`Payment does not match order ${orderId}: ${detail}`);
+  }
+}
 import { prisma, OrderStatus } from '@storeforge/db';
 import type { CheckoutInput } from '@storeforge/shared';
 import { getPaymentProvider, platformFeeCents as computePlatformFee } from '../payments';
@@ -128,19 +139,23 @@ export class OrdersService {
       return 'order_not_found';
     }
     if (order.status !== OrderStatus.PENDING_PAYMENT) return 'order_already_processed';
+    let detail: string | null = null;
     if (p.checkoutId && order.providerCheckoutId && order.providerCheckoutId !== p.checkoutId) {
-      this.logger.error(`Order ${orderId}: checkout id mismatch (${p.checkoutId})`);
-      return 'checkout_mismatch';
-    }
-    if (
+      detail = `checkout ${p.checkoutId} ≠ expected ${order.providerCheckoutId}`;
+    } else if (
       (p.amountCents != null && p.amountCents !== order.totalCents) ||
       (p.currency && p.currency.toUpperCase() !== order.currency.toUpperCase())
     ) {
-      this.logger.error(`Order ${orderId}: paid ${p.amountCents} ${p.currency} but expected ${order.totalCents} ${order.currency}`);
-      return 'amount_mismatch';
+      detail = `paid ${p.amountCents} ${p.currency?.toUpperCase()} but order total is ${order.totalCents} ${order.currency}`;
     }
-    await this.markPaid(orderId, p.paymentId, p.provider, p.checkoutId);
-    return 'order_paid';
+    if (detail) {
+      this.logger.error(`Order ${orderId}: ${detail} (payment ${p.paymentId})`);
+      await prisma.order.update({ where: { id: orderId }, data: { flag: 'payment_mismatch', flagDetail: `${detail} · payment ${p.paymentId}`, flaggedAt: new Date() } });
+      const store = await prisma.store.findUnique({ where: { id: order.storeId } });
+      throw new PaymentMismatchError(orderId, store?.organizationId ?? null, detail);
+    }
+    const r = await this.markPaid(orderId, p.paymentId, p.provider, p.checkoutId);
+    return r.transitioned ? 'order_paid' : 'order_already_processed';
   }
 
   async markPaymentFailed(orderId: string, status: 'FAILED' | 'CANCELLED') {
@@ -150,16 +165,14 @@ export class OrdersService {
     });
   }
 
+  /**
+   * PENDING_PAYMENT → PAID exactly once. The conditional update is the lock: concurrent callers
+   * (duplicate webhooks, completed + async_payment_succeeded) see count 0 and do nothing, so
+   * fulfillment is routed once.
+   */
   async markPaid(orderId: string, providerPaymentId: string, provider = 'stub', providerCheckoutId?: string) {
-    const existing = await prisma.order.findUnique({ where: { id: orderId } });
-    if (!existing) throw new NotFoundException('Order not found');
-    // Do not regress SHIPPED/DELIVERED/etc. back to PAID (idempotent for already-paid).
-    if (existing.status !== OrderStatus.PENDING_PAYMENT) {
-      return existing;
-    }
-
-    const order = await prisma.order.update({
-      where: { id: orderId },
+    const r = await prisma.order.updateMany({
+      where: { id: orderId, status: OrderStatus.PENDING_PAYMENT },
       data: {
         status: OrderStatus.PAID,
         provider,
@@ -167,12 +180,15 @@ export class OrdersService {
         ...(providerCheckoutId ? { providerCheckoutId } : {}),
       },
     });
+    const order = await prisma.order.findUnique({ where: { id: orderId } });
+    if (!order) throw new NotFoundException('Order not found');
+    if (r.count !== 1) return { ...order, transitioned: false };
 
     const q = await enqueueRouteFulfillment(orderId);
     if (q.inline) {
       await this.fulfillment.routeOrder(orderId);
     }
-    return order;
+    return { ...order, transitioned: true };
   }
 
   async listForStore(storeId: string) {

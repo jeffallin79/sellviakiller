@@ -47,9 +47,30 @@ export class FakeStripeProvider extends StripePaymentProvider {
   async createTopUpIntent(o: any) {
     return { paymentIntentId: uid('pi'), clientSecret: 'pi_secret_x', status: 'requires_payment_method' };
   }
-  async refundPayment(o: { paymentId: string; amountCents: number; idempotencyKey: string }) {
+  /** Refunds that exist "on Stripe" (keyed by idempotency key so retries return the same one). */
+  stripeRefunds = new Map<string, { refundId: string; status: string; paymentId: string; metadata: Record<string, string> }>();
+  /** Set to make the next refundPayment throw (after or instead of creating it). */
+  refundFailure: null | { error: any; created: boolean } = null;
+  async refundPayment(o: { paymentId: string; amountCents: number; idempotencyKey: string; metadata?: Record<string, string> }) {
     this.refunds.push(o);
-    return { refundId: uid('re'), status: this.refundStatus };
+    let r = this.stripeRefunds.get(o.idempotencyKey);
+    const fail = this.refundFailure;
+    this.refundFailure = null;
+    if (fail && !fail.created) throw fail.error;
+    if (!r) {
+      r = { refundId: uid('re'), status: this.refundStatus, paymentId: o.paymentId, metadata: o.metadata ?? {} };
+      this.stripeRefunds.set(o.idempotencyKey, r);
+    }
+    if (fail) throw fail.error; // created on Stripe, but the response never arrived
+    return { refundId: r.refundId, status: r.status };
+  }
+  async getRefund(id: string) {
+    for (const r of this.stripeRefunds.values()) if (r.refundId === id) return { refundId: r.refundId, status: r.status };
+    return null;
+  }
+  async findRefundByMetadata(paymentId: string, key: string, value: string) {
+    for (const r of this.stripeRefunds.values()) if (r.paymentId === paymentId && r.metadata[key] === value) return { refundId: r.refundId, status: r.status };
+    return null;
   }
 }
 
