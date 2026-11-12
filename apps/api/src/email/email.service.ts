@@ -11,6 +11,10 @@ export const EMAIL_LEASE_MS = 2 * 60_000;
 /** Outbox sweeper backoff: 30s, 1m, 2m, 4m … after each attempt */
 const retryAfterMs = (attempts: number) => 30_000 * 2 ** Math.max(0, attempts - 1);
 
+/** Header-safe single line: no CR/LF (header injection), collapsed whitespace, RFC 5322-friendly length. */
+export function headerLine(s: string, max = 200) {
+  return s.replace(/[\r\n]+/g, ' ').replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s{2,}/g, ' ').trim().slice(0, max);
+}
 export const orderNumber = (orderId: string) => orderId.slice(-8).toUpperCase();
 
 /** "Juniper Goods <orders@mail.storeforge.app>" — display name is the shop, address is ours (SPF/DKIM). */
@@ -51,7 +55,7 @@ export class EmailService {
             to: ctx.to,
             from: fromHeader(ctx.ctx.store.name),
             replyTo: ctx.replyTo,
-            subject: r.subject,
+            subject: headerLine(r.subject),
             html: r.html,
             text: r.text,
           },
@@ -94,10 +98,11 @@ export class EmailService {
     try {
       const res = await transport.send({
         id: m.id,
-        from: m.from,
-        to: m.to,
-        replyTo: m.replyTo,
-        subject: m.subject,
+        // Headers are re-sanitised at the boundary too (rows written before this fix, or by other code)
+        from: m.from.replace(/[\r\n]+/g, ''),
+        to: m.to.replace(/[\r\n\s]+/g, ''),
+        replyTo: m.replyTo ? m.replyTo.replace(/[\r\n\s]+/g, '') : m.replyTo,
+        subject: headerLine(m.subject),
         html: m.html,
         text: m.text,
         idempotencyKey: `sf-email-${m.id}`,
