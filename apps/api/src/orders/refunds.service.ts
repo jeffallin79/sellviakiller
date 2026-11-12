@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, NotFoundException, ConflictException, 
 import { prisma, Prisma, OrderStatus } from '@storeforge/db';
 import { getPaymentProvider, isDefiniteRejection } from '../payments';
 import { EmailService } from '../email/email.service';
+import { NotificationsService } from '../payments/notifications.service';
 
 const REFUNDABLE: OrderStatus[] = [
   OrderStatus.PAID,
@@ -19,6 +20,7 @@ const REFUNDABLE: OrderStatus[] = [
 @Injectable()
 export class RefundsService {
   private readonly logger = new Logger(RefundsService.name);
+  private readonly notifications = new NotificationsService();
   constructor(private readonly emails: EmailService) {}
 
   async create(organizationId: string, orderId: string, input: { amountCents?: number; reason?: string; requestId: string }) {
@@ -125,6 +127,58 @@ export class RefundsService {
         });
       }
     });
+  }
+
+  /**
+   * Timeout reconciler (same shape as Ad Fuel's): a refund left 'unknown' (timeout / 5xx while
+   * creating it) or 'pending' too long still has its amount reserved on the order. Ask Stripe:
+   *   has a provider id      → getRefund → applyStatus (succeeded / failed releases / pending)
+   *   no provider id (unknown) → submit() again: it first looks the refund up by metadata, then
+   *                             retries with the SAME idempotency key, so it can't refund twice.
+   * After 24 h unresolved the merchant and platform are alerted once.
+   */
+  async reconcileStuck(olderThanMs = 5 * 60_000, now = new Date()) {
+    const cutoff = new Date(now.getTime() - olderThanMs);
+    const stuck = await prisma.orderRefund.findMany({
+      where: { status: { in: ['pending', 'unknown'] }, createdAt: { lt: cutoff }, OR: [{ reconciledAt: null }, { reconciledAt: { lt: cutoff } }] },
+      include: { order: { include: { store: true } } },
+      orderBy: { createdAt: 'asc' },
+      take: 50,
+    });
+    const provider = getPaymentProvider();
+    const out: { refundId: string; result: string }[] = [];
+    for (const r of stuck) {
+      // claim (compare-and-set on reconciledAt) so two instances don't both ask
+      const c = await prisma.orderRefund.updateMany({
+        where: { id: r.id, OR: [{ reconciledAt: null }, { reconciledAt: { lt: cutoff } }] },
+        data: { reconciledAt: now },
+      });
+      if (!c.count) continue;
+      try {
+        if (r.providerRefundId) {
+          const p = await provider.getRefund(r.providerRefundId);
+          if (p) await this.applyStatus({ refundId: p.refundId, status: p.status, orderRefundId: r.id });
+          out.push({ refundId: r.id, result: p?.status ?? 'not_found' });
+        } else {
+          const s: any = await this.submit(r.id);
+          out.push({ refundId: r.id, result: String(s?.status ?? 'submitted') });
+        }
+      } catch (e) {
+        out.push({ refundId: r.id, result: `error: ${e instanceof Error ? e.message : e}` });
+      }
+      const after = await prisma.orderRefund.findUniqueOrThrow({ where: { id: r.id } });
+      if (['pending', 'unknown'].includes(after.status) && now.getTime() - r.createdAt.getTime() > 24 * 3600_000) {
+        for (const organizationId of [r.order.store.organizationId, null]) {
+          await this.notifications.notify({
+            organizationId, kind: 'order_refund_stuck', severity: 'critical', orderId: r.orderId,
+            title: 'A refund has not settled after 24 hours',
+            body: `Refund of ${r.amountCents} cents on order ${r.orderId.slice(-8).toUpperCase()} is still ${after.status}. The amount stays reserved until Stripe confirms it.`,
+            dedupeKey: `order_refund_stuck:${r.id}:${organizationId ?? 'platform'}`,
+          });
+        }
+      }
+    }
+    return out;
   }
 
   list(organizationId: string, orderId: string) {
