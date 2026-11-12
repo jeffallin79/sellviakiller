@@ -68,6 +68,40 @@ if (order.status === 'AWAITING_MERCHANT_APPROVAL') {
 }
 const after = (await call('GET', `/orders/${order.id}`)).json;
 ok(after.fulfillment?.trackingNumber, `tracking ${after.fulfillment?.carrier} ${after.fulfillment?.trackingNumber} (${after.status})`);
+// ---- slice 2: order emails + refunds ----
+const mails = (await call('GET', `/emails?orderId=${order.id}`)).json;
+const kinds = mails.items.map((m) => m.kind);
+ok(kinds.includes('ORDER_CONFIRMED') && kinds.includes('ORDER_SHIPPED'), `order emails: ${kinds.join(', ')} via ${mails.transport}`);
+const shippedMail = mails.items.find((m) => m.kind === 'ORDER_SHIPPED');
+const shippedHtml = (await call('GET', `/emails/${shippedMail.id}/html`)).json;
+ok(String(shippedHtml).includes(after.fulfillment.trackingNumber), 'shipped email carries the tracking number');
+const rf = await call('POST', `/orders/${order.id}/refunds`, { amountCents: 100, requestId: `smoke-refund-${Date.now()}` });
+ok(rf.status < 300 && rf.json.status === 'succeeded', 'partial refund $1 (stub)');
+ok((await call('GET', `/emails?orderId=${order.id}`)).json.items.some((m) => m.kind === 'ORDER_REFUNDED'), 'refund email');
+ok((await call('POST', `/orders/${order.id}/refunds`, { amountCents: 10_000_000, requestId: `smoke-over-${Date.now()}` })).status === 400, 'over-refund rejected');
+// ---- slice 2: custom domain (stub DNS/TLS) ----
+const host = `shop-${slug}.example.com`;
+const dom = await call('POST', '/domains', { storeId, host });
+ok(dom.status < 300 && dom.json.status === 'PENDING_DNS' && dom.json.records.length >= 2, `domain added, ${dom.json.records.map((r) => r.type).join('+')} records`);
+const cfg = (await call('GET', '/domains/config')).json;
+if (cfg.dnsMode === 'stub') {
+  ok((await call('GET', `/storefront/resolve-host?host=${host}`)).status === 404, 'unverified domain not served');
+  await call('POST', `/domains/${dom.json.id}/dev/simulate-dns`);
+  const t0 = Date.now();
+  let st = '';
+  while (Date.now() - t0 < 90_000) {
+    st = (await call('POST', `/domains/${dom.json.id}/check`)).json.status;
+    if (st === 'ACTIVE') break;
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  ok(st === 'ACTIVE', `domain ACTIVE ${Math.round((Date.now() - t0) / 1000)}s after DNS (stub TLS)`);
+  const rh = await call('GET', `/storefront/resolve-host?host=${host}`);
+  ok(rh.json.slug === slug && rh.json.kind === 'custom', 'host routes to the store');
+  if (!process.env.DOMAIN_TLS_ASK_TOKEN) ok((await call('GET', `/domains/tls-ask?domain=${host}`)).status === 200, 'tls-ask allows the verified host');
+  ok((await call('DELETE', `/domains/${dom.json.id}`)).status < 300, 'domain removed');
+} else {
+  console.log('skip - DNS is live; simulate path not available');
+}
 const topup = await call('POST', '/fuel/topups', { amountCents: 2000, requestId: `smoke-${Date.now()}` });
 ok(topup.status < 300, 'ad fuel top-up (stub)');
 const w = await call('GET', '/fuel');
