@@ -815,6 +815,7 @@ model ConversionEvent {
   payload       Json?
   sentAt        DateTime?
   createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 

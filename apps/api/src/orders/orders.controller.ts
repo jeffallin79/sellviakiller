@@ -7,7 +7,9 @@ import {
   UseGuards,
   NotFoundException,
   ForbiddenException,
+  Req,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { ApiTags } from '@nestjs/swagger';
 import { CheckoutSchema } from '@storeforge/shared';
 import { OrdersService } from './orders.service';
@@ -48,9 +50,12 @@ export class OrdersController {
   }
 
   @Post('checkout')
-  async checkout(@Body() body: unknown) {
+  async checkout(@Body() body: unknown, @Req() req: Request) {
     const input = CheckoutSchema.parse(body);
-    return this.orders.checkout(input);
+    // Behind the storefront's same-origin proxy the shopper's address is the first X-Forwarded-For hop.
+    const xff = String(req.headers['x-forwarded-for'] ?? '').split(',')[0]?.trim();
+    const ua = req.headers['x-sf-client-ua'] ?? req.headers['user-agent'];
+    return this.orders.checkout(input, { ip: xff || req.socket?.remoteAddress || null, userAgent: typeof ua === 'string' ? ua : null });
   }
 
   @Get('orders')

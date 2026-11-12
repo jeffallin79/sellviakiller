@@ -1,3 +1,4 @@
+import { AdsModule } from './ads/ads.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
@@ -16,6 +17,7 @@ import { HealthController } from './health.controller';
 
 @Module({
   imports: [
+    AdsModule,
     ConfigModule.forRoot({ isGlobal: true }),
     AuthModule,
     StoresModule,

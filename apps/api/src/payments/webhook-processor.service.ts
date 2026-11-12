@@ -33,8 +33,9 @@ export class WebhookProcessorService {
     private readonly disputes: DisputesService,
     private readonly notifications: NotificationsService,
     private readonly refunds: RefundsService,
-    private readonly wallet: AdWalletService = new AdWalletService(),
   ) {}
+  /** Stateless; not injected so the payments module doesn't depend on the ads module. */
+  private readonly wallet = new AdWalletService();
 
   async process(event: ProviderEvent, endpoint: WebhookEndpoint): Promise<WebhookResult> {
     const provider = getPaymentProvider();

@@ -17,16 +17,19 @@ import { FulfillmentService } from '../fulfillment/fulfillment.service';
 import { enqueueRouteFulfillment } from '../jobs/queues';
 import { EmailService } from '../email/email.service';
 import { DomainsService } from '../domains/domains.service';
+import { ConversionsService } from '../ads/conversions.service';
 
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
+  /** Stateless (no DI) so orders don't depend on the ads module. */
+  private readonly conversions = new ConversionsService();
   constructor(
     private readonly fulfillment: FulfillmentService,
     private readonly emails: EmailService,
   ) {}
 
-  async checkout(input: CheckoutInput) {
+  async checkout(input: CheckoutInput, client: { ip?: string | null; userAgent?: string | null } = {}) {
     const store = await prisma.store.findFirst({
       where: { slug: input.storeSlug, deletedAt: null, status: 'ACTIVE' },
       include: { organization: true },
@@ -89,6 +92,10 @@ export class OrdersService {
         provider: provider.kind,
         payoutAccountId: provider.kind === 'stub' ? null : org.payoutAccountId,
         lines: { create: lineData },
+        // Ad attribution (slice 3). Only kept when the shopper consented to marketing cookies.
+        attribution: input.attribution?.consent
+          ? { consent: true, fbp: input.attribution.fbp ?? null, fbc: input.attribution.fbc ?? null, sourceUrl: input.attribution.sourceUrl ?? null, ip: client.ip ?? null, ua: client.userAgent?.slice(0, 500) ?? null, at: new Date().toISOString() }
+          : { consent: false },
       },
       include: { lines: true },
     });
@@ -194,6 +201,9 @@ export class OrdersService {
     // 2) Confirmation email: only the outbox row is written here; delivery is a job / background
     //    send and never delays (or blocks) fulfilment. A lost row is recreated by sweepPaid().
     await this.emails.orderEvent('ORDER_CONFIRMED', orderId);
+    // 3) Meta Conversions API Purchase (event_id order_<id>, shared with the browser Pixel). The
+    //    row is written here; sending is background with retries (capi.dispatch). Never throws.
+    await this.conversions.orderPaid(orderId);
     return { ...order, transitioned: true };
   }
 

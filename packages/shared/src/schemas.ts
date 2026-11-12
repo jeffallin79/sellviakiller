@@ -46,6 +46,19 @@ export const CheckoutSchema = z.object({
     postalCode: z.string().min(1),
     country: z.string().min(2).max(2).default('US'),
   }),
+  /**
+   * Ad attribution captured by the storefront (slice 3). `consent` = the shopper accepted marketing
+   * cookies in the banner; without it no Pixel loads and no Conversions API event is sent.
+   * IP and user agent are added server-side from the request.
+   */
+  attribution: z
+    .object({
+      consent: z.boolean().default(false),
+      fbp: z.string().max(200).regex(/^fb\.\d\.\d+\.[\w.-]+$/).optional(),
+      fbc: z.string().max(500).regex(/^fb\.\d\.\d+\.[\w.-]+$/).optional(),
+      sourceUrl: z.string().url().max(2000).optional(),
+    })
+    .optional(),
 });
 
 export const ApproveFulfillmentSchema = z.object({

@@ -165,10 +165,12 @@ export class AdWalletService {
    * idempotency key sf-autoreload-<wallet>-<seq>, so racing debits start exactly one reload and
    * a retried call can never create a second PaymentIntent.
    */
+  // reloadStartedAt is written as UTC explicitly: Prisma stores DateTime as UTC in timestamp(3)
+  // columns, and a raw Date parameter would otherwise be converted with the session time zone.
   async maybeAutoReload(walletId: string, now = new Date()) {
     const claimed = await prisma.$queryRaw<{ reloadSeq: number }[]>`
       UPDATE "AdWallet"
-         SET "reloadInFlight" = true, "reloadSeq" = "reloadSeq" + 1, "reloadStartedAt" = ${now}, "reloadAmountCents" = "autoReloadCents"
+         SET "reloadInFlight" = true, "reloadSeq" = "reloadSeq" + 1, "reloadStartedAt" = (${now.toISOString()}::timestamptz AT TIME ZONE 'UTC'), "reloadAmountCents" = "autoReloadCents"
        WHERE "id" = ${walletId} AND "autoReloadEnabled" AND NOT "reloadInFlight" AND "paymentMethodId" IS NOT NULL
          AND "autoReloadCents" > 0 AND ("balanceCents" + "bonusCents") < "thresholdCents"
        RETURNING "reloadSeq"`;
@@ -247,6 +249,38 @@ export class AdWalletService {
     const out: { walletId: string; status: string }[] = [];
     for (const w of stuck) out.push({ walletId: w.id, status: (await this.runReload(w.id, w.reloadSeq)).status });
     return out;
+  }
+
+  /** Everything the Ad Fuel screen shows. */
+  async overview(organizationId: string) {
+    const w = await this.walletFor(organizationId);
+    const ledger = await this.ledger(organizationId, 100);
+    const topups = await prisma.walletTxn.findMany({ where: { walletId: w.id, kind: 'TOPUP' }, orderBy: { createdAt: 'desc' }, take: 50 });
+    const refunded = await prisma.walletTxn.groupBy({ by: ['refundOfId'], where: { walletId: w.id, kind: 'REFUND', status: { not: 'failed' }, refundOfId: { in: topups.map((t) => t.id) } }, _sum: { amountCents: true } });
+    const byTopup = Object.fromEntries(refunded.map((r) => [r.refundOfId, -(r._sum.amountCents ?? 0)]));
+    const windowMs = 90 * 86_400_000;
+    const shortfall = await prisma.adChargeDay.aggregate({ where: { walletId: w.id, shortfallCents: { gt: 0 } }, _sum: { shortfallCents: true } });
+    const today = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00Z');
+    const spentToday = await prisma.adChargeDay.aggregate({ where: { walletId: w.id, date: today }, _sum: { spendDebitedCents: true, feeDebitedCents: true } });
+    return {
+      wallet: {
+        id: w.id, currency: w.currency, balanceCents: w.balanceCents, bonusCents: w.bonusCents, availableCents: w.balanceCents + w.bonusCents,
+        autoReloadEnabled: w.autoReloadEnabled, thresholdCents: w.thresholdCents, autoReloadCents: w.autoReloadCents,
+        card: w.paymentMethodId ? { label: w.paymentMethodLabel ?? 'Saved card' } : null,
+        reload: { inFlight: w.reloadInFlight, startedAt: w.reloadStartedAt, failures: w.reloadFailures, lastError: w.reloadLastError, maxPerDay: reloadMaxPerDay() },
+        lowFuelAt: w.lowFuelAt,
+      },
+      shortfallCents: shortfall._sum.shortfallCents ?? 0,
+      todayCents: (spentToday._sum.spendDebitedCents ?? 0) + (spentToday._sum.feeDebitedCents ?? 0),
+      topups: topups.map((t) => {
+        const refundedCents = byTopup[t.id] ?? 0;
+        const deadline = new Date(t.createdAt.getTime() + windowMs);
+        const open = deadline.getTime() > Date.now() && t.status !== 'failed';
+        return { id: t.id, amountCents: t.amountCents, createdAt: t.createdAt, source: t.source, refundedCents, refundableCents: open ? Math.max(0, Math.min(t.amountCents - refundedCents, w.balanceCents)) : 0, refundDeadline: deadline };
+      }),
+      ledger,
+      limits: { minTopupCents: 1000, maxTopupCents: 500000, reloadMinCents: RELOAD_MIN, reloadMaxCents: RELOAD_MAX, refundWindowDays: 90 },
+    };
   }
 
   /** Ledger page: newest first, with campaign names. */
