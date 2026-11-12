@@ -33,8 +33,9 @@ async function resolve(host: string): Promise<Resolved | 'error'> {
 export async function middleware(req: NextRequest) {
   // X-Forwarded-Host only from a TRUSTED_PROXIES peer (stamped by server.mjs); otherwise Host.
   const peer = peerFromStamp(req.headers.get('x-sf-peer'), process.env.SF_PEER_TOKEN);
-  if (req.nextUrl.pathname === '/api/checkout') {
-    // Proxied to the API (next.config rewrites): pass the shopper's real IP for Meta CAPI matching.
+  if (req.nextUrl.pathname === '/api/checkout' || req.nextUrl.pathname === '/api/storefront/carts') {
+    // Proxied to the API (next.config rewrites): pass the shopper's real IP (Meta CAPI matching on
+    // checkout; per-shopper rate limit on the reminder opt-in, slice 5).
     const headers = new Headers(req.headers);
     headers.delete('x-sf-peer');
     headers.delete('x-sf-client-ip');
@@ -72,5 +73,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next|favicon.ico|api|catalog/).*)', '/api/checkout'],
+  matcher: ['/((?!_next|favicon.ico|api|catalog/).*)', '/api/checkout', '/api/storefront/carts'],
 };

@@ -42,7 +42,10 @@ export class CartsService {
   constructor(private readonly emails: EmailService) {}
 
   async capture(input: CartCaptureInput, clientKey: string): Promise<{ stored: boolean; id?: string; rotate?: boolean; withdrawn?: boolean; reason?: 'unsubscribed' }> {
-    if (limited(`${clientKey}|${input.storeSlug}`)) throw new BadRequestException('Too many updates, try again in a few minutes');
+    // Per shopper (IP from the storefront proxy), per cart token, and per shop overall (the IP header
+    // can be forged by someone calling the API directly, so the shop-wide cap is the backstop).
+    if (limited(`ip|${clientKey}|${input.storeSlug}`) || limited(`tok|${input.token}`, 120) || limited(`shop|${input.storeSlug}`, 3000))
+      throw new BadRequestException('Too many updates, try again in a few minutes');
     const store = await prisma.store.findFirst({ where: { slug: input.storeSlug, deletedAt: null, status: 'ACTIVE' }, select: { id: true } });
     if (!store) throw new NotFoundException('Store not found');
     const key = { storeId_token: { storeId: store.id, token: input.token } };
@@ -84,7 +87,7 @@ export class CartsService {
       const c = await prisma.cart.create({ data: { ...data, storeId: store.id, token: input.token, consentAt: new Date() } });
       return { stored: true, id: c.id };
     } catch (e: any) {
-      if (e?.code === 'P2002') return this.capture(input, `${clientKey}#retry`); // raced another tab
+      if (e?.code === 'P2002') return this.capture(input, clientKey); // raced another tab
       throw e;
     }
   }

@@ -8,9 +8,11 @@ import { API_URL } from '@/lib/api';
 
 const NAV: { href: string; label: string; icon: IconName; soon?: boolean }[] = [
   { href: '/launchpad', label: 'Launchpad', icon: 'launchpad' },
+  { href: '/research', label: 'Research', icon: 'research' },
   { href: '/shelf', label: 'Shelf', icon: 'shelf' },
   { href: '/dispatch', label: 'Dispatch', icon: 'dispatch' },
   { href: '/emails', label: 'Emails', icon: 'email' },
+  { href: '/recovery', label: 'Recovery', icon: 'recover' },
   { href: '/boost', label: 'Boost', icon: 'boost' },
   { href: '/fuel', label: 'Ad Fuel', icon: 'fuel' },
 ];

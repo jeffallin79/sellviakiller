@@ -1,13 +1,14 @@
 'use client';
 
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { Icon } from '@storeforge/ui/icons';
 import { ThemeToggle } from '@storeforge/ui/theme';
 import { Callout, Money } from '@storeforge/ui/components';
 import { ProductImage } from '@storeforge/ui/product-image';
 import { api } from '@/lib/api';
-import { useCart, shippingFor, FREE_SHIPPING_CENTS, SHIPPING_CENTS } from '@/lib/cart';
+import { useCart, shippingFor, FREE_SHIPPING_CENTS, SHIPPING_CENTS, cartToken, setCartToken, rotateCartToken } from '@/lib/cart';
+import { CART_CONSENT_TEXT } from '@storeforge/shared';
 import { titleOf, type StoreProduct } from '@/lib/store';
 import { useShopHref } from '@/lib/base';
 import { attribution, track } from '@/lib/pixel';
@@ -18,7 +19,26 @@ export const useShop = () => useContext(ShopCtx);
 
 export function ShopFrame({ slug, store, products, children }: { slug: string; store: any; products: StoreProduct[] | null; children: ReactNode }) {
   const [open, setOpen] = useState(false);
-  const { count } = useCart(slug);
+  const [note, setNote] = useState('');
+  const { count, replace } = useCart(slug);
+  // Recovery link from a reminder email (?recover=<cart>&t=<sig>): put the bag back, open it.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const id = q.get('recover');
+    const t = q.get('t');
+    if (!id || !t) return;
+    q.delete('recover'); q.delete('t');
+    window.history.replaceState(null, '', `${window.location.pathname}${q.size ? `?${q}` : ''}${window.location.hash}`);
+    api<{ status: string; token: string | null; lines: { storeProductId: string; quantity: number }[] }>(`/storefront/carts/recover?id=${encodeURIComponent(id)}&t=${encodeURIComponent(t)}`)
+      .then((r) => {
+        if (r.status === 'CONVERTED') { setNote('You already checked out this bag. Thanks!'); setOpen(true); return; }
+        if (r.token) setCartToken(slug, r.token);
+        if (r.lines.length) replace(Object.fromEntries(r.lines.map((l) => [l.storeProductId, l.quantity])));
+        setNote(r.lines.length ? 'Your bag is back, just as you left it. Prices shown are today\'s.' : 'Those items are no longer available, sorry.');
+        setOpen(true);
+      })
+      .catch(() => { setNote('That link has expired. Your bag may still be here.'); setOpen(true); });
+  }, [slug]);
   const href = useShopHref(slug);
   const name = store?.name ?? slug;
   return (
@@ -47,13 +67,35 @@ export function ShopFrame({ slug, store, products, children }: { slug: string; s
           <span className="sf-muted"><Icon name="secure" size={16} /> Card payments by Stripe · Shop built on StoreForge</span>
         </div>
       </footer>
-      {open && <CartDrawer slug={slug} products={products ?? []} onClose={() => setOpen(false)} />}
+      {open && <CartDrawer slug={slug} products={products ?? []} note={note} onClose={() => { setOpen(false); setNote(''); }} />}
     </ShopCtx.Provider>
   );
 }
 
-function CartDrawer({ slug, products, onClose }: { slug: string; products: StoreProduct[]; onClose: () => void }) {
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+function CartDrawer({ slug, products, note, onClose }: { slug: string; products: StoreProduct[]; note?: string; onClose: () => void }) {
   const { cart, set, clear } = useCart(slug);
+  const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
+  const [remind, setRemind] = useState(false);
+  const synced = useRef(false);
+  // Reminder opt-in (unticked by default). Only with the box ticked AND an email typed is the bag
+  // saved on the server; unticking tells the server to forget the address.
+  useEffect(() => {
+    const wants = remind && EMAIL_RE.test(email.trim());
+    if (!wants && !synced.current) return;
+    const h = setTimeout(() => {
+      const body = { storeSlug: slug, token: cartToken(slug), consent: wants, ...(wants ? { email: email.trim(), name: name.trim() || undefined } : {}), lines: Object.entries(cart).map(([storeProductId, quantity]) => ({ storeProductId, quantity })).slice(0, 50) };
+      api<{ stored: boolean; rotate?: boolean }>('/storefront/carts', { method: 'POST', body: JSON.stringify(body) })
+        .then((r) => {
+          if (r.rotate) { rotateCartToken(slug); return; }
+          synced.current = r.stored;
+        })
+        .catch(() => null);
+    }, 800);
+    return () => clearTimeout(h);
+  }, [remind, email, name, cart, slug]);
   const [step, setStep] = useState<'bag' | 'details'>('bag');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -71,13 +113,13 @@ function CartDrawer({ slug, products, onClose }: { slug: string; products: Store
       const res = await api<any>('/checkout', {
         method: 'POST',
         body: JSON.stringify({
-          storeSlug: slug, email: fd.get('email'), name: fd.get('name'),
+          storeSlug: slug, email: fd.get('email'), name: fd.get('name'), cartToken: cartToken(slug), cartConsent: remind,
           lines: lines.map((l) => ({ storeProductId: l.id, quantity: l.q })),
           shippingAddress: { line1: fd.get('line1'), city: fd.get('city'), state: fd.get('state'), postalCode: fd.get('postalCode'), country: fd.get('country') },
           attribution: attribution(),
         }),
       });
-      if (res.checkoutUrl) { clear(); window.location.href = res.checkoutUrl; return; }
+      if (res.checkoutUrl) { clear(); rotateCartToken(slug); window.location.href = res.checkoutUrl; return; }
       setError('Checkout did not return a payment page. Please try again.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Checkout failed');
@@ -92,6 +134,7 @@ function CartDrawer({ slug, products, onClose }: { slug: string; products: Store
           <h2 style={{ margin: 0 }}>{step === 'bag' ? 'Your bag' : 'Delivery details'}</h2>
           <button className="sf-btn sf-btn--sm sf-btn--quiet" onClick={onClose} aria-label="Close"><Icon name="close" size={18} /></button>
         </div>
+        {note && <Callout tone="info">{note}</Callout>}
         {lines.length === 0 ? (
           <p className="sf-muted">Your bag is empty.</p>
         ) : step === 'bag' ? (
@@ -116,8 +159,12 @@ function CartDrawer({ slug, products, onClose }: { slug: string; products: Store
           </>
         ) : (
           <form onSubmit={pay}>
-            <div className="sf-field"><label className="sf-label" htmlFor="c-name">Full name</label><input id="c-name" name="name" className="sf-input" required autoComplete="name" /></div>
-            <div className="sf-field"><label className="sf-label" htmlFor="c-email">Email (for tracking)</label><input id="c-email" name="email" type="email" className="sf-input" required autoComplete="email" /></div>
+            <div className="sf-field"><label className="sf-label" htmlFor="c-name">Full name</label><input id="c-name" name="name" className="sf-input" required autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} /></div>
+            <div className="sf-field"><label className="sf-label" htmlFor="c-email">Email (for tracking)</label><input id="c-email" name="email" type="email" className="sf-input" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
+            <label className="sf-optin" htmlFor="c-remind">
+              <input id="c-remind" type="checkbox" className="sf-check" checked={remind} onChange={(e) => setRemind(e.target.checked)} />
+              <span>{CART_CONSENT_TEXT}</span>
+            </label>
             <div className="sf-field"><label className="sf-label" htmlFor="c-l1">Street address</label><input id="c-l1" name="line1" className="sf-input" required autoComplete="address-line1" /></div>
             <div className="two">
               <div className="sf-field"><label className="sf-label" htmlFor="c-city">City</label><input id="c-city" name="city" className="sf-input" required autoComplete="address-level2" /></div>

@@ -9,7 +9,7 @@ import { Icon } from '@storeforge/ui/icons';
 import { Badge, Callout, StatusBadge } from '@storeforge/ui/components';
 
 type Mail = { id: string; kind: string; to: string; from: string; subject: string; status: string; transport: string | null; attempts: number; lastError: string | null; sentAt: string | null; createdAt: string; orderId: string | null };
-const KIND: Record<string, string> = { ORDER_CONFIRMED: 'Confirmation', ORDER_SHIPPED: 'Shipped', ORDER_DELIVERED: 'Delivered', ORDER_REFUNDED: 'Refund' };
+const KIND: Record<string, string> = { ORDER_CONFIRMED: 'Confirmation', ORDER_SHIPPED: 'Shipped', ORDER_DELIVERED: 'Delivered', ORDER_REFUNDED: 'Refund', CART_REMINDER_1: 'Bag reminder 1', CART_REMINDER_2: 'Bag reminder 2' };
 const when = (iso: string) => new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
 function EmailsInner() {
@@ -42,7 +42,7 @@ function EmailsInner() {
 
   return (
     <>
-      <PageHead eyebrow="Dispatch · customer emails" icon="email" title="Emails" lede="Every receipt and shipping update we sent your customers, exactly as they saw it." />
+      <PageHead eyebrow="Dispatch · customer emails" icon="email" title="Emails" lede="Every receipt, shipping update and bag reminder we sent your customers, exactly as they saw it." />
       {data?.transport === 'outbox' && (
         <Callout tone="info" title="Dev outbox">Emails are saved, not sent: you can read them here and in the API&apos;s <span className="sf-mono">.outbox</span> folder. Add a Resend API key to deliver them for real.</Callout>
       )}
@@ -66,7 +66,7 @@ function EmailsInner() {
           {m ? (
             <>
               <div className="mail__head">
-                <div className="sf-spread"><strong>{m.subject}</strong>{m.status !== 'SENT' && <button className="sf-btn sf-btn--sm sf-btn--brand" onClick={() => retry(m.id)}><Icon name="sync" size={16} />Send again</button>}</div>
+                <div className="sf-spread"><strong>{m.subject}</strong>{m.status !== 'SENT' && m.status !== 'CANCELLED' && <button className="sf-btn sf-btn--sm sf-btn--brand" onClick={() => retry(m.id)}><Icon name="sync" size={16} />Send again</button>}</div>
                 <span className="sf-muted">From <span className="sf-mono">{m.from}</span></span>
                 <span className="sf-muted">To <span className="sf-mono">{m.to}</span> · {m.status === 'SENT' ? `${m.transport === 'outbox' ? 'saved to outbox' : 'sent'} ${when(m.sentAt ?? m.createdAt)}` : `${m.attempts} attempt${m.attempts === 1 ? '' : 's'}`}</span>
                 {m.lastError && m.status !== 'SENT' && <Callout tone="bad">{m.lastError}</Callout>}

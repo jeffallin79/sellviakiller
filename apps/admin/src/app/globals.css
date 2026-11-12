@@ -235,3 +235,51 @@
   .mboost-timer { grid-template-columns: auto 1fr; }
   .mboost-timer__bar { grid-column: 1 / -1; }
 }
+
+/* ---------- Slice 5: Research ---------- */
+.research { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.research__side { display: grid; gap: 16px; position: sticky; top: 16px; }
+.research__table tbody tr { cursor: pointer; }
+.research__table tbody tr.is-sel { background: rgb(var(--sf-brand) / 0.08); box-shadow: inset 4px 0 0 rgb(var(--sf-brand)); }
+.research__pick { background: none; border: 0; padding: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.research__pick:focus-visible { outline: 3px solid rgb(var(--sf-focus)); outline-offset: 3px; border-radius: 8px; }
+.research__insight { margin: 14px 0 6px; padding: 12px 14px; border-radius: var(--sf-radius); background: rgb(var(--sf-surface-2)); line-height: 1.5; }
+.research__facts { margin-top: 14px; }
+.scorepill { display: inline-grid; place-items: center; min-width: 42px; padding: 4px 8px; border-radius: 999px; font-weight: 700; background: rgb(var(--sf-surface-2)); border: 2px solid rgb(var(--sf-line)); }
+.scorepill.is-good { background: rgb(var(--sf-ok-ink) / 0.16); border-color: rgb(var(--sf-ok-ink) / 0.5); }
+.scorepill.is-low { background: rgb(var(--sf-bad-ink) / 0.12); border-color: rgb(var(--sf-bad-ink) / 0.4); }
+.scorebig { display: grid; place-items: center; width: 72px; height: 72px; flex: none; border-radius: 22px; font: 800 2rem/1 var(--sf-font-mono); background: rgb(var(--sf-surface-2)); border: 3px solid rgb(var(--sf-line)); }
+.scorebig.is-good { border-color: rgb(var(--sf-ok-ink)); color: rgb(var(--sf-ok-ink)); }
+.scorebig.is-low { border-color: rgb(var(--sf-bad-ink)); color: rgb(var(--sf-bad-ink)); }
+.trendcell { display: inline-flex; align-items: center; gap: 8px; color: rgb(var(--sf-brand)); white-space: nowrap; }
+.trendcell .is-up { color: rgb(var(--sf-ok-ink)); display: inline-flex; gap: 2px; align-items: center; font-size: 0.82rem; }
+.trendcell .is-down { color: rgb(var(--sf-bad-ink)); display: inline-flex; gap: 2px; align-items: center; font-size: 0.82rem; }
+.spark { display: block; }
+.meters { display: grid; gap: 10px; margin-top: 14px; }
+.meter { font-size: 0.86rem; }
+.meter__track { height: 8px; border-radius: 999px; background: rgb(var(--sf-surface-2)); border: 1px solid rgb(var(--sf-line)); overflow: hidden; margin-top: 4px; }
+.meter__fill { height: 100%; background: rgb(var(--sf-warn-ink)); border-radius: 999px; }
+.meter__fill.is-good { background: rgb(var(--sf-ok-ink)); }
+.meter__fill.is-low { background: rgb(var(--sf-bad-ink)); }
+.angles { display: grid; gap: 10px; }
+.angle { padding: 12px 14px; border: 2px solid rgb(var(--sf-line)); border-radius: var(--sf-radius); }
+.angle p { margin: 6px 0 0; }
+.calc__in { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.calc__in .sf-field { margin: 0; }
+.calc__out { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 14px; margin-top: 14px; }
+.calc__rows { display: grid; gap: 4px; font-size: 0.88rem; }
+.calc__row { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; border-bottom: 1px dashed rgb(var(--sf-line)); }
+.calc__result { display: grid; gap: 4px; align-content: start; padding: 14px; border-radius: var(--sf-radius); background: rgb(var(--sf-surface-2)); }
+.calc__big { font-size: 1.9rem; letter-spacing: -0.03em; }
+.calc__big.is-neg, .is-neg { color: rgb(var(--sf-bad-ink)); }
+.calc__be { display: grid; gap: 2px; margin-top: 6px; font-size: 0.85rem; }
+@media (max-width: 1100px) { .research { grid-template-columns: 1fr; } .research__side { position: static; } }
+@media (max-width: 640px) { .calc__in { grid-template-columns: 1fr 1fr; } .calc__out { grid-template-columns: 1fr; } }
+
+/* ---------- Slice 5: Recovery ---------- */
+.recovery-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; margin-bottom: 18px; }
+.optin-preview { display: grid; grid-template-columns: auto 1fr; gap: 10px; padding: 12px 14px; border: 2px dashed rgb(var(--sf-line)); border-radius: var(--sf-radius); font-size: 0.9rem; }
+.timeline { display: grid; gap: 8px; margin: 12px 0 0; padding: 0; list-style: none; }
+.timeline li { display: grid; grid-template-columns: 82px 1fr; gap: 10px; font-size: 0.9rem; }
+.timeline li strong { font-family: var(--sf-font-mono); }
+@media (max-width: 900px) { .recovery-grid { grid-template-columns: 1fr; } }

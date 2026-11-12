@@ -74,6 +74,8 @@
 .drawer__thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .drawer__sum { display: grid; gap: 6px; padding: 14px; border-radius: var(--sf-radius); background: rgb(var(--sf-surface-2)); }
 .drawer__sum div { display: flex; justify-content: space-between; }
+.sf-optin { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; margin: 2px 0 14px; font-size: 0.88rem; line-height: 1.45; color: rgb(var(--sf-ink)); cursor: pointer; }
+.sf-optin .sf-check { margin-top: 2px; }
 .drawer__sum .total { font-weight: 750; font-size: 1.1rem; padding-top: 6px; border-top: 2px dashed rgb(var(--sf-line)); }
 .drawer .sf-field { margin-bottom: 10px; }
 .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
