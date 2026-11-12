@@ -243,7 +243,7 @@ Go-live checklist (Meta):
 - **App Review, Advanced Access** for `ads_management`, `ads_read`, `business_management`, `pages_show_list`,
   `pages_read_engagement`. Needs a screencast of this flow, a privacy policy URL and a data-deletion callback/URL.
 - Valid OAuth redirect URI: `{API_PUBLIC_URL}/api/boost/meta/callback`. App Domains include the admin domain.
-- Env: `META_APP_ID`, `META_APP_SECRET`, `META_LOGIN_CONFIG_ID`, `META_GRAPH_VERSION` (v23.0), `ADS_TOKEN_KEY`
+- Env: `META_APP_ID`, `META_APP_SECRET`, `META_LOGIN_CONFIG_ID`, `META_GRAPH_VERSION` (v26.0; v23 expired 2026-06-09, v24 2026-10-06), `ADS_TOKEN_KEY`
   (`openssl rand -base64 32`), `API_PUBLIC_URL`, `ADMIN_URL`. Stripe live keys are needed for real top-ups.
   `META_BUSINESS_ID`/`META_SYSTEM_USER_TOKEN`/`META_CAPI_TOKEN` are for managed mode (slice 4).
 - Test: set a Test Events code on the store, place an order, and check Events Manager → Test events: server
@@ -268,6 +268,89 @@ Go-live checklist (Meta):
   paid + consented orders up to ~7 days old, with the same `event_id` (still deduplicated) and the order time as `event_time`.
 - Private-address checks (TLS probe, trusted proxies) canonicalise IPs first: IPv4-mapped (dotted or hex),
   expanded/compressed IPv6, NAT64/6to4/Teredo, non-canonical IPv4 (`127.1`, `0x7f…`) are all handled.
+
+## Phase 1 · Slice 4 — Managed Boost (Meta managed, Google Ads Performance Max, TikTok)
+
+Pick a product → StoreForge writes 4 copy variants, renders 4 crops (1:1, 4:5, 9:16, 1.91:1), checks
+them against ad policy, and launches on the channels the merchant picks, in **StoreForge-owned** ad
+accounts (one per store per channel). Fuel pays **spend + `ADS_FEE_PCT` (15%)**, charged hourly.
+
+All three platforms run as **stubs** until keys exist (`GOOGLE_ADS_MODE`/`TIKTOK_MODE`/`META_MODE` blank
+or `stub`). The stubs keep each platform's real request/response shapes (Google Ads REST `googleAds:search`
+GAQL + atomic `googleAds:mutate` with temp resource names; Merchant API v1 sub-accounts, data sources,
+`productInputs:insert`; TikTok Business API v1.3 `{code,message,request_id,data}` envelope; Graph v26.0)
+over one delivery simulator that honours budgets, review, pauses and **account spend ceilings**.
+
+| Where | What |
+| --- | --- |
+| `apps/api/src/ads/managed/` | `managed.service.ts` (provision, drafts, launch, sync, ceilings, fuel, ladder, reconcile), `adapters.ts` (one `ManagedChannel` per platform), `google/` `tiktok/` `metam/` (client interface + live + stub), `creative.service.ts`, `policy.service.ts`, `conversions.ts`, `config.ts`, `sim.ts` |
+| API | `GET /api/boost/managed`, `POST …/enable`, `POST …/drafts`, `POST/GET …/groups/:id`, `…/launch`, `…/pause`, `…/resume`, `…/budget`, `POST …/sync`, `GET …/events`; public `GET /api/managed/render/:storeProductId/:ratio.png` |
+| Admin | Boost → **Managed by StoreForge** tab (the slice-3 flow is the *Your own Meta account* tab) |
+| Storefront | consent-gated Meta Pixel(s) + Google tag (AW-) + TikTok Pixel; `gclid`/`ttclid`/`_ttp` sent with checkout only with consent |
+
+**Money safety**
+- Charges: `chargeDay` deltas per campaign-day (idempotent, row-locked, fuel never < 0); fee = round(spend × 15%).
+- Ceilings: each account has a platform-side lifetime limit = spent + its share of collectible fuel
+  `floor((fuel − uncharged × 1.15) / 1.15)`: Meta `spend_cap`, Google account budget (`spending_limit_micros`),
+  TikTok prepaid balance (BC `RECHARGE`/`DEDUCT`). Recomputed after every charge/top-up/launch/budget change
+  under a per-account lease + dirty flag. **Meta's `spend_cap` is never 0** (0 = no cap) and has a platform
+  minimum (`META_MIN_SPEND_CAP_CENTS`, $100): below it the hourly low-fuel pause is the backstop.
+- Low fuel → every managed campaign on every channel pauses (one notice); top-up raises ceilings first, then resumes.
+- Launch: needs one day of budget + 15% in fuel; group status CAS + per-campaign lease; every platform id is saved
+  as soon as it exists and lost responses are found by their `[sf:<id>]` tag, so retries never duplicate.
+- Reconcile (02:00 UTC): D-1…D-7 platform vs charged; any drift is charged/credited to the platform number
+  (`AdReconcile`), > `ADS_RECONCILE_ALERT_BPS` (1%) alerts ops; account spend no campaign explains alerts critical.
+- Conversions: one Purchase per channel (Meta CAPI on the managed Pixel, Google enhanced conversion
+  **adjustment** keyed by order id with the hashed email only, TikTok Events API `CompletePayment`), each deduped
+  with its browser tag by the same id; consent required; retried with backoff for up to 7 days.
+
+### What Jeff needs to apply for (live keys)
+
+**Google Ads (Performance Max + Merchant Center)**
+1. **Google Ads manager account (MCC)** for StoreForge, with a **payments profile on monthly invoicing**
+   (consolidated billing). Without invoicing, billing setups for client accounts can't be created by API and
+   each client needs a card. → `GOOGLE_ADS_MCC_ID`, `GOOGLE_ADS_PAYMENTS_ACCOUNT_ID`.
+2. **Google Cloud project** with the Google Ads API and Merchant API enabled. Since **2026-09-09 there are no
+   developer tokens**: the access level belongs to the Cloud project that owns the OAuth client. Enabling gives
+   *Test*; apply in Cloud Console → Google Ads API → Overview for **Explorer** (2,880 ops/day on production, usually
+   automated). We need **Basic** (15,000 ops/day) to scale, and **account creation (`CreateCustomerClient`) and
+   billing setup are not allowed at Explorer**, so Basic is required before the first live store. Standard
+   (unlimited) later.
+3. **OAuth consent screen: External, published, brand-verified** (Basic access requires it). Scopes
+   `…/auth/adwords` + `…/auth/content` are sensitive, so they need Google's verification (privacy policy, homepage,
+   domain ownership, demo video). → `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and a refresh token
+   from the MCC admin user → `GOOGLE_ADS_REFRESH_TOKEN`.
+4. **Merchant Center advanced (multi-client) account** linked to the MCC (request "advanced account" in MC
+   settings); the Cloud project registered with `accounts.developerRegistration:registerGcp`. → `GOOGLE_MERCHANT_CENTER_ID`.
+   Per store we create a sub-account, a primary API data source, and link it to the store's Ads client account.
+   Each store's website must be **verified and claimed** in its sub-account before products serve. *Not built
+   yet: confirm the live claim flow (HTML tag / file on our storefront host) when keys exist.* `approveAdsLink`
+   in `google/live.ts` is the one Merchant API call marked VERIFY.
+5. Policy: Google Ads **advertiser verification** for the MCC's payments profile; Shopping/PMax policies
+   (landing pages must be https with price, shipping and returns).
+
+**TikTok (Business API v1.3)**
+1. **TikTok For Business developer account** + a **developer app** (portal → Create an App). The description must say
+   it creates and manages ad accounts for StoreForge's merchants under our Business Center. Scopes: Ad Account
+   Management, Ads Management, Reporting, **Business Center** (asset + advertiser + transfer), Pixel/Events,
+   Catalog, Creative (image upload). Review takes 2–3 business days. → `TIKTOK_APP_ID`, `TIKTOK_APP_SECRET`.
+2. **Business Center** (an agency/self-service-agency BC can create AUCTION advertisers via `/bc/advertiser/create/`;
+   agency BCs need `qualification_info`). Fund it as a **prepaid** BC (we move balance into each advertiser with
+   `/bc/transfer/`); per-BC creation quotas apply. → `TIKTOK_BC_ID`.
+3. A BC **Admin** authorises the app → long-term access token. → `TIKTOK_ACCESS_TOKEN`.
+4. Choose the industry id from `/tools/industry/get/` → `TIKTOK_INDUSTRY_ID` (current value is a placeholder).
+
+**Meta (managed mode)**
+1. StoreForge **Business Manager**, verified (Business Verification), with a credit line or card that ad
+   accounts it creates can use, and a high enough ad-account creation limit. → `META_BUSINESS_ID`.
+2. A Business-type app with Marketing API and **Full access** (formerly "Advanced") for `ads_management`,
+   `business_management`, `ads_read` (App Review). → `META_APP_SECRET` (already used in slice 3).
+3. An **Admin system user** in the BM with a never-expiring token for that app. → `META_SYSTEM_USER_TOKEN`.
+4. The **StoreForge Facebook Page** managed ads run as. → `META_MANAGED_PAGE_ID`. *(Decision for Jeff: ads show as
+   StoreForge's Page, not the merchant's. Using each merchant's Page needs Page access per store.)*
+
+Once those exist, set the env vars (see `.env.example`), leave the `*_MODE` vars blank, restart the API, and run
+one store end-to-end with a small budget on each channel before turning on `ADS_MANAGED_CHANNELS` for everyone.
 
 ## Dependency audit (`pnpm audit --prod`)
 

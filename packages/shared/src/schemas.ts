@@ -57,6 +57,10 @@ export const CheckoutSchema = z.object({
       fbp: z.string().max(200).regex(/^fb\.\d\.\d+\.[\w.-]+$/).optional(),
       fbc: z.string().max(500).regex(/^fb\.\d\.\d+\.[\w.-]+$/).optional(),
       sourceUrl: z.string().url().max(2000).optional(),
+      /** Google Ads click id (?gclid=) and TikTok click id (?ttclid=) + _ttp cookie (slice 4) */
+      gclid: z.string().max(300).regex(/^[\w-]+$/).optional(),
+      ttclid: z.string().max(500).regex(/^[\w.-]+$/).optional(),
+      ttp: z.string().max(200).regex(/^[\w.-]+$/).optional(),
     })
     .optional(),
 });

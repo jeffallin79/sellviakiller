@@ -16,4 +16,4 @@ data/
 .outbox/
 
 # Stub Meta Marketing API state (dev)
-.stub-meta.json
+.stub-*.json

@@ -4,6 +4,8 @@ import { prisma, Prisma } from '@storeforge/db';
 import { getMetaClient, MetaApiError, type CapiEvent } from './meta';
 import { openToken } from './token-vault';
 import { enqueueCapiDispatch } from '../jobs/queues';
+import { ManagedConversions, refOf } from './managed/conversions';
+import { getManagedChannel } from './managed/adapters';
 
 export const MAX_CAPI_ATTEMPTS = 8;
 const backoffMs = (attempts: number) => Math.min(6 * 3600_000, 60_000 * 2 ** Math.max(0, attempts - 1)); // 1m, 2m, 4m … 6h
@@ -38,10 +40,13 @@ type Attribution = { consent?: boolean; fbp?: string | null; fbc?: string | null
 export class ConversionsService {
   private readonly logger = new Logger(ConversionsService.name);
   private readonly inflight = new Set<Promise<unknown>>();
+  /** Managed Boost accounts (Meta managed CAPI, Google enhanced conversions, TikTok Events API) */
+  readonly managed = new ManagedConversions();
 
   /** Tests: wait for background dispatches started by this instance. */
   async idle() {
     while (this.inflight.size) await Promise.all([...this.inflight]);
+    await this.managed.idle();
   }
 
   private async accountFor(storeId: string) {
@@ -89,20 +94,24 @@ export class ConversionsService {
       const order = await prisma.order.findUnique({ where: { id: orderId }, include: { lines: true } });
       if (!order) return null;
       const account = await this.accountFor(order.storeId);
-      if (!account) return null; // no Pixel → nothing to send
+      const managed = await this.managed.accountsFor(order.storeId);
+      if (!account && !managed.length) return null; // no Pixel and no managed Boost → nothing to send
       const attr = (order.attribution ?? {}) as Attribution;
-      const base = { storeId: order.storeId, orderId, eventName: 'Purchase', eventId: eventIdFor(orderId), testEventCode: account.testEventCode };
+      const base = { storeId: order.storeId, orderId, eventName: 'Purchase', eventId: eventIdFor(orderId), testEventCode: account?.testEventCode ?? null };
       let row;
       try {
         if (attr.consent !== true) {
           row = await prisma.conversionEvent.create({ data: { ...base, metaStatus: 'skipped', lastError: 'no_consent' } });
           return row;
         }
-        row = await prisma.conversionEvent.create({ data: { ...base, metaStatus: 'pending', payload: this.buildEvent(order, attr, eventTime) as any } });
+        // The hashed payload is kept even without an owned Pixel: managed deliveries are built from it.
+        row = await prisma.conversionEvent.create({ data: { ...base, metaStatus: account ? 'pending' : 'skipped', lastError: account ? null : 'no_owned_pixel', payload: this.buildEvent(order, attr, eventTime) as any } });
       } catch (e) {
         if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') return null; // already recorded (replay)
         throw e;
       }
+      if (managed.length) await this.managed.createFor(row.id, managed);
+      if (!account) return row;
       const q = await enqueueCapiDispatch(row.id);
       if (q.inline) {
         const p = this.dispatch(row.id).catch(() => null).finally(() => this.inflight.delete(p));
@@ -121,7 +130,7 @@ export class ConversionsService {
    * event_time = when the order was placed. Meta accepts website events up to 7 days old.
    */
   async sweepMissing(now = new Date(), graceMs = 2 * 60_000) {
-    const accounts = await prisma.adAccount.findMany({ where: { channel: 'META', mode: 'OWNED', status: 'active', pixelId: { not: null } }, select: { storeId: true } });
+    const accounts = await prisma.adAccount.findMany({ where: { OR: [{ channel: 'META', mode: 'OWNED', status: 'active', pixelId: { not: null } }, { mode: 'MANAGED', status: 'active', provisionStatus: 'ready', campaigns: { some: { launchedAt: { not: null } } } }] }, select: { storeId: true } });
     if (!accounts.length) return [];
     const orders = await prisma.order.findMany({
       where: {
@@ -195,14 +204,33 @@ export class ConversionsService {
     const order = await prisma.order.findUnique({ where: { id: orderId } });
     if (!order || order.status === 'PENDING_PAYMENT' || order.createdAt.getTime() < Date.now() - 24 * 3600_000) throw new NotFoundException();
     const account = await this.accountFor(order.storeId);
-    if (!account) throw new NotFoundException();
-    return { pixelId: account.pixelId, eventId: eventIdFor(order.id), value: order.totalCents / 100, currency: order.currency.toUpperCase(), stub: getMetaClient().mode === 'stub' };
+    const tags = await this.managedTags(order.storeId);
+    if (!account && !tags.length) throw new NotFoundException();
+    // Google: transaction_id = order id (joins the server ENHANCEMENT); Meta/TikTok: event id order_<id>
+    return { pixelId: account?.pixelId ?? null, eventId: eventIdFor(order.id), transactionId: order.id, value: order.totalCents / 100, currency: order.currency.toUpperCase(), stub: getMetaClient().mode === 'stub', tags };
+  }
+
+  /** Browser tags of the store's managed Boost accounts (Meta pixel / gtag AW- / TikTok pixel code) */
+  async managedTags(storeId: string) {
+    const accts = await this.managed.accountsFor(storeId);
+    return accts.map((a) => ({ ...getManagedChannel(a.channel).browserTag(refOf(a)), stub: getManagedChannel(a.channel).mode === 'stub' })).filter((t): t is NonNullable<typeof t> & { kind: 'meta' | 'gtag' | 'tiktok'; id: string } => Boolean(t && (t as any).id));
   }
 
   /** Public, for every storefront page: is there a Pixel to load (after consent)? */
   async pixelForStore(storeId: string) {
     const a = await this.accountFor(storeId);
-    return a ? { pixelId: a.pixelId, stub: getMetaClient().mode === 'stub' } : null;
+    const tags = await this.managedTags(storeId);
+    return a || tags.length ? { pixelId: a?.pixelId ?? null, stub: getMetaClient().mode === 'stub', tags } : null;
+  }
+
+  /** Stub mode only: a managed tag's browser hit (gtag conversion / TikTok pixel / managed Meta pixel). */
+  async recordManagedBrowserEvent(o: { kind: 'meta' | 'gtag' | 'tiktok'; id: string; eventName: string; eventId: string }) {
+    const accts = await prisma.adAccount.findMany({ where: { mode: 'MANAGED', provisionStatus: 'ready', OR: [{ pixelId: o.id }, { conversionTag: { startsWith: o.id } }] } });
+    const a = accts.find((x) => (o.kind === 'meta' ? x.channel === 'META' : o.kind === 'gtag' ? x.channel === 'GOOGLE' : x.channel === 'TIKTOK'));
+    const ch = a ? getManagedChannel(a.channel) : null;
+    if (!a || !ch || ch.mode !== 'stub' || !ch.recordBrowserEvent) throw new NotFoundException();
+    ch.recordBrowserEvent(refOf(a), o.eventName, o.eventId);
+    return { ok: true };
   }
 
   /** Stub mode only: the storefront's stand-in Pixel reports browser events here. */

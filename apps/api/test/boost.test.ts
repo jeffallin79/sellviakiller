@@ -242,7 +242,7 @@ test('CAPI: Purchase sent once with hashed customer data, test_event_code, and d
   assert.equal(meta.testEvents(PIXEL).filter((e) => e.eventId === `order_${orderId}` && e.source === 'server').length, 1);
   // thank-you page Pixel data: no PII
   const px = await capi.pixelForOrder(orderId);
-  assert.deepEqual(Object.keys(px).sort(), ['currency', 'eventId', 'pixelId', 'stub', 'value']);
+  assert.deepEqual(Object.keys(px).sort(), ['currency', 'eventId', 'pixelId', 'stub', 'tags', 'transactionId', 'value']);
 });
 
 test('CAPI: no consent → nothing sent (row marked skipped); no Pixel selected → no row', async () => {

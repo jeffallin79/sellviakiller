@@ -183,6 +183,69 @@ ok(ref.status < 300 && ref.json.status === 'succeeded', 'ad fuel refund $5 (stub
     ok((await call('POST', '/boost/meta/disconnect', { storeId })).status < 300, 'disconnect Meta');
   }
 }
+// ---- slice 4: managed Boost — enable 3 channels, draft (variants/crops/policy), launch, sync, conversions ----
+{
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const mo = (await call('GET', `/boost/managed?storeId=${storeId}`)).json;
+  ok(mo.feePct === 15, `managed fee ${mo.feePct}%`);
+  if (mo.channels.some((c) => c.mode !== 'stub')) console.log('skip - a managed channel is live; stub path not available');
+  else {
+    await call('POST', '/fuel/checkout', { amountCents: 10000, requestId: `smoke-fuel4-${Date.now()}` });
+    const en = (await call('POST', '/boost/managed/enable', { storeId, channels: ['META', 'GOOGLE', 'TIKTOK'] })).json;
+    ok(en.channels.every((c) => c.account?.status === 'ready'), `accounts ready: ${en.channels.map((c) => `${c.channel}=${c.account?.externalId}`).join(' ')}`);
+    const again = (await call('POST', '/boost/managed/enable', { storeId, channels: ['META', 'GOOGLE', 'TIKTOK'] })).json;
+    ok(again.channels.every((c, i) => c.account.id === en.channels[i].account.id), 'enable twice → same accounts');
+    const rq = `smoke-mb-${Date.now()}`;
+    const [d1, d2] = await Promise.all([1, 2].map(() => call('POST', '/boost/managed/drafts', { storeId, storeProductId: sp.json[0].id, requestId: rq })));
+    ok(d1.json.id === d2.json.id && d1.json.variants.length === 4 && d1.json.assets.length === 4, `draft: 4 variants, 4 crops, policy ${d1.json.policyResult}`);
+    const png = await fetch(d1.json.assets[0].url);
+    ok(png.status === 200 && png.headers.get('content-type') === 'image/png', `crop renders (${d1.json.assets[0].ratio}, ${(await png.arrayBuffer()).byteLength} B)`);
+    const bad = await call('POST', `/boost/managed/groups/${d1.json.id}`, { headline: 'Miracle cure lamp' });
+    ok(bad.json.policyResult === 'block', 'policy blocks a miracle claim');
+    ok((await call('POST', `/boost/managed/groups/${d1.json.id}/launch`)).status === 400, 'blocked copy can’t launch');
+    await call('POST', `/boost/managed/groups/${d1.json.id}`, { variantIndex: 1 });
+    const fixed = await call('POST', `/boost/managed/groups/${d1.json.id}`, { variantIndex: 0, headline: 'Warm light, small rooms', body: 'Dimmable lamp that ships fast.' });
+    ok(fixed.json.policyResult !== 'block', 'edited copy passes');
+    const t0 = Date.now();
+    const [l1, l2] = await Promise.all([1, 2].map(() => call('POST', `/boost/managed/groups/${d1.json.id}/launch`)));
+    ok(l1.status < 300 && l2.status < 300, `launch (double click) → ${l1.json.status}/${l2.json.status}`);
+    let g;
+    for (let i = 0; i < 120 && g?.status !== 'LIVE'; i++) { g = (await call('GET', `/boost/managed/groups/${d1.json.id}`)).json; if (g.status !== 'LIVE') await sleep(500); }
+    ok(g.status === 'LIVE' && g.campaigns.length === 3 && g.campaigns.every((c) => c.externalId), `live on ${g.campaigns.map((c) => c.channel).join('+')} in ${(g.launchMs / 1000).toFixed(1)} s (wall ${((Date.now() - t0) / 1000).toFixed(1)} s, target < 180 s)`);
+    ok(g.launchMs < 180_000, 'pick → launch under 3 minutes');
+    const ov = (await call('GET', `/boost/managed?storeId=${storeId}`)).json;
+    ok(ov.channels.every((c) => c.account.capMinor > 0), `ceilings set: ${ov.channels.map((c) => `${c.channel}=${c.account.capMinor}`).join(' ')}`);
+    const sy = await call('POST', '/boost/managed/sync', { storeId });
+    ok(sy.status < 300 && sy.json.synced === 3, 'managed insights pulled + charged (spend + 15%)');
+    const wal = (await call('GET', '/fuel/wallet')).json.wallet;
+    ok(wal.balanceCents >= 0 && wal.bonusCents >= 0, `fuel never below 0 (${wal.balanceCents}¢)`);
+    ok((await call('POST', `/boost/managed/groups/${g.id}/pause`)).json.campaigns.every((c) => c.stage === 'PAUSED'), 'pause all channels');
+    ok((await call('POST', `/boost/managed/groups/${g.id}/resume`)).json.campaigns.every((c) => c.stage !== 'PAUSED'), 'resume all channels');
+    // conversions: consented order with click ids → one server Purchase per channel + browser twins dedup'd
+    const co = await call('POST', '/checkout', {
+      storeSlug: slug, email: 'Buyer4@Example.com', name: 'Buyer Four', lines: [{ storeProductId: sp.json[0].id, quantity: 1 }],
+      shippingAddress: { line1: '4 Main', city: 'Regina', state: 'SK', postalCode: 'S4P0A1', country: 'CA' },
+      attribution: { consent: true, gclid: 'Cj0KCQ-e2e_gclid', ttclid: 'E.C.P.e2e-ttclid', ttp: 'e2e.ttp', sourceUrl: `http://${slug}.storeforge.local/` },
+    }, { 'user-agent': 'Mozilla/5.0 e2e' });
+    const oid = new URL(co.json.checkoutUrl).searchParams.get('orderId');
+    const px = (await call('GET', `/storefront/orders/${oid}/pixel`)).json;
+    ok(px.tags.map((t) => t.kind).sort().join() === 'gtag,meta,tiktok' && px.transactionId === oid, 'thank-you page gets Meta + gtag + TikTok tags');
+    for (const t of px.tags) {
+      const r = await call('POST', '/storefront/stub-pixel', { kind: t.kind, pixelId: t.id, eventName: t.kind === 'tiktok' ? 'CompletePayment' : t.kind === 'gtag' ? 'purchase' : 'Purchase', eventId: t.kind === 'gtag' ? oid : px.eventId });
+      ok(r.status === 202, `browser ${t.kind} purchase (stub)`);
+    }
+    let evs;
+    for (let i = 0; i < 30; i++) {
+      evs = (await call('GET', `/boost/managed/events?storeId=${storeId}`)).json;
+      if (evs.every((c) => c.events.some((e) => e.source === 'server' && String(e.eventId).includes(oid)))) break;
+      await sleep(300);
+    }
+    for (const c of evs) {
+      const mine = c.events.filter((e) => String(e.eventId).includes(oid));
+      ok(mine.length === 2 && mine.filter((e) => !e.deduplicated).length === 1, `${c.channel}: server + browser, counted once`);
+    }
+  }
+}
 const csv = await call('GET', '/export/orders.csv');
 ok(csv.status === 200 && String(csv.json).includes(order.id), 'orders CSV export');
 // ---- QA round 2 #3: storefront ignores X-Forwarded-Host from an untrusted peer ----

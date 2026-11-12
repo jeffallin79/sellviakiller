@@ -8,6 +8,7 @@ import { PageHead } from '@/components/PageHead';
 import { SignInNeeded } from '@/components/SignInNeeded';
 import { Icon } from '@storeforge/ui/icons';
 import { Badge, Bars, Callout, Collage, Money, money } from '@storeforge/ui/components';
+import { ManagedBoost } from '@/components/ManagedBoost';
 
 const rid = () => (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`).replace(/-/g, '');
 const toCents = (s: string) => Math.round(Number(s.replace(/[$,\s]/g, '')) * 100);
@@ -289,6 +290,8 @@ function BoostInner() {
   const [flash, setFlash] = useState('');
   const [busy, setBusy] = useState('');
   const [tick, setTick] = useState(0);
+  const tab: 'managed' | 'own' = params.get('tab') === 'own' || params.get('connected') || params.get('error') ? 'own' : 'managed';
+  const setTab = (t: 'managed' | 'own') => router.replace(t === 'own' ? '/boost?tab=own' : '/boost');
 
   useEffect(() => {
     api<any[]>('/stores').then((s) => {
@@ -299,7 +302,7 @@ function BoostInner() {
     const err = params.get('error');
     if (err) setError(ERRORS[err] ?? 'Facebook connection failed. Try again.');
     if (params.get('connected')) setFlash('Facebook connected. Now pick the ad account, Page and Pixel to use.');
-    if (err || params.get('connected')) router.replace('/boost');
+    if (err || params.get('connected')) router.replace('/boost?tab=own');
   }, [params, router]);
 
   const refresh = useCallback(() => {
@@ -329,7 +332,7 @@ function BoostInner() {
     <>
       <PageHead
         eyebrow="Boost · ads" icon="boost" title="Boost"
-        lede="Advertise a product on Facebook and Instagram from your own Meta ad account. Boost sets up the campaign, tracks every sale and shows true results."
+        lede={tab === 'managed' ? 'Pick a product and Boost runs the ads on Meta, Google and TikTok for you, paid from Ad Fuel. Every sale is tracked and you see true profit.' : 'Advertise a product on Facebook and Instagram from your own Meta ad account. Boost sets up the campaign, tracks every sale and shows true results.'}
         actions={
           <div className="sf-row" style={{ gap: 10 }}>
             {stores && stores.length > 1 && (
@@ -340,10 +343,15 @@ function BoostInner() {
                 </select>
               </div>
             )}
-            {o?.campaigns.some((c) => c.externalId) && <button type="button" className="sf-btn sf-btn--alt" disabled={busy === 'sync'} onClick={sync}><Icon name="sync" size={18} />{busy === 'sync' ? 'Refreshing…' : 'Refresh results'}</button>}
+            {tab === 'own' && o?.campaigns.some((c) => c.externalId) && <button type="button" className="sf-btn sf-btn--alt" disabled={busy === 'sync'} onClick={sync}><Icon name="sync" size={18} />{busy === 'sync' ? 'Refreshing…' : 'Refresh results'}</button>}
           </div>
         }
       />
+      <div className="mboost-tabs" role="tablist" aria-label="Boost mode">
+        <button type="button" role="tab" aria-selected={tab === 'managed'} className={tab === 'managed' ? 'is-on' : ''} onClick={() => setTab('managed')}><Icon name="spark" size={16} />Managed by StoreForge</button>
+        <button type="button" role="tab" aria-selected={tab === 'own'} className={tab === 'own' ? 'is-on' : ''} onClick={() => setTab('own')}><Icon name="boost" size={16} />Your own Meta account</button>
+      </div>
+      {tab === 'managed' ? (stores?.length === 0 ? <Callout tone="warn">Open a store first, then boost its products.</Callout> : storeId ? <ManagedBoost key={storeId} storeId={storeId} products={products} /> : null) : <>
       {o?.mode === 'stub' && <Callout tone="info" title="Dev mode">Facebook is simulated: no real ads run and nothing is charged. Results come from a stand-in Meta that behaves like the real one.</Callout>}
       {flash && <Callout tone="ok">{flash}</Callout>}
       {error && <Callout tone="bad">{error}</Callout>}
@@ -372,6 +380,7 @@ function BoostInner() {
           </div>
         </div>
       )}
+      </>}
     </>
   );
 }

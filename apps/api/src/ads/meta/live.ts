@@ -11,7 +11,7 @@ export class LiveMetaClient implements MetaMarketingClient {
   constructor(
     private readonly appId = process.env.META_APP_ID ?? '',
     private readonly appSecret = process.env.META_APP_SECRET ?? '',
-    private readonly version = process.env.META_GRAPH_VERSION ?? 'v23.0',
+    private readonly version = process.env.META_GRAPH_VERSION ?? 'v26.0',
     private readonly fetchImpl: typeof fetch = fetch,
   ) {
     this.base = `https://graph.facebook.com/${version}`;

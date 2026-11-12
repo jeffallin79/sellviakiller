@@ -4,14 +4,14 @@ import { Suspense, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Icon } from '@storeforge/ui/icons';
 import { Callout, Collage } from '@storeforge/ui/components';
-import { getConsent, loadPixel, track } from '@/lib/pixel';
+import { getConsent, loadTags, track, type Tag } from '@/lib/pixel';
 
 function CompleteInner() {
   const params = useSearchParams();
   const stubPaid = params.get('stub_paid') === '1' || params.get('mode') === 'stub';
   const orderId = params.get('orderId');
   useEffect(() => {
-    // Browser half of the Purchase event; the server sends the same event id via the Conversions API.
+    // Browser half of the Purchase event on every tag; the server sends the same ids (CAPI / enhanced conversions / Events API).
     if (!orderId || getConsent() !== 'granted') return;
     const key = `sf-purchase-${orderId}`;
     try { if (sessionStorage.getItem(key)) return; } catch { /* ignore */ }
@@ -21,9 +21,10 @@ function CompleteInner() {
       if (r?.status === 404 && tries++ < 5) { setTimeout(go, 2000); return; } // payment still confirming
       if (!r?.ok) return;
       const p = await r.json();
-      if (!p.pixelId) return;
-      loadPixel(p.pixelId, !!p.stub);
-      track('Purchase', { value: p.value, currency: p.currency }, p.eventId);
+      const tags: Tag[] = [...(p.pixelId ? [{ kind: 'meta' as const, id: p.pixelId, stub: !!p.stub }] : []), ...(p.tags ?? [])];
+      if (!tags.length) return;
+      loadTags(tags);
+      track('Purchase', { value: p.value, currency: p.currency }, p.eventId, p.transactionId);
       try { sessionStorage.setItem(key, '1'); } catch { /* ignore */ }
     };
     void go();

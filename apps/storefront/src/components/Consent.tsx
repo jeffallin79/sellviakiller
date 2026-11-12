@@ -2,12 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { getConsent, loadPixel, setConsent, track, type Consent } from '@/lib/pixel';
+import { getConsent, loadTags, setConsent, track, type Consent, type Tag } from '@/lib/pixel';
 
-/** Marketing-cookie banner + the store's Meta Pixel (only after "Accept"). */
+/** Marketing-cookie banner + the store's ad tags (owned Meta Pixel, managed Boost tags), only after "Accept". */
 export function ShopPixel({ storeId }: { storeId: string | null | undefined }) {
   const [consent, setC] = useState<Consent | 'loading'>('loading');
-  const [pixel, setPixel] = useState<{ pixelId: string | null; stub?: boolean } | null>(null);
+  const [pixel, setPixel] = useState<{ pixelId: string | null; stub?: boolean; tags?: Tag[] } | null>(null);
   const path = usePathname();
 
   useEffect(() => {
@@ -21,8 +21,10 @@ export function ShopPixel({ storeId }: { storeId: string | null | undefined }) {
     fetch(`/api/storefront/stores/${encodeURIComponent(storeId)}/pixel`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then(setPixel).catch(() => setPixel(null));
   }, [storeId]);
   useEffect(() => {
-    if (consent !== 'granted' || !pixel?.pixelId) return;
-    loadPixel(pixel.pixelId, !!pixel.stub);
+    if (consent !== 'granted' || !pixel) return;
+    const tags: Tag[] = [...(pixel.pixelId ? [{ kind: 'meta' as const, id: pixel.pixelId, stub: !!pixel.stub }] : []), ...(pixel.tags ?? [])];
+    if (!tags.length) return;
+    loadTags(tags);
     track('PageView');
   }, [consent, pixel, path]);
 

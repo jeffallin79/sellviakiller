@@ -189,3 +189,46 @@
 .boost-stub__list { display: grid; gap: 10px; padding-left: 18px; }
 .fuel-ledger td:first-child, .fuel-grid .sf-table td.sf-mono { white-space: nowrap; }
 @media (max-width: 1100px) { .fuel-actions { order: -1; } }
+
+/* ---------- managed Boost (slice 4) ---------- */
+.mboost-tabs { display: inline-flex; gap: 4px; padding: 4px; border: var(--sf-stroke) solid rgb(var(--sf-line)); border-radius: var(--sf-radius-pill); background: rgb(var(--sf-surface)); margin-bottom: 18px; max-width: 100%; overflow-x: auto; }
+.mboost-tabs button { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 14px; border: 0; border-radius: var(--sf-radius-pill); background: transparent; color: rgb(var(--sf-muted)); font: 600 0.88rem/1 var(--sf-font-ui); cursor: pointer; white-space: nowrap; }
+.mboost-tabs button.is-on { background: rgb(var(--sf-ink)); color: rgb(var(--sf-surface)); }
+.mboost-ch { list-style: none; padding: 0; margin: 14px 0; display: grid; gap: 12px; }
+.mboost-ch li { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start; }
+.mboost-err { color: rgb(var(--sf-danger)); overflow-wrap: anywhere; }
+.mboost-draft { display: grid; gap: 22px; }
+.mboost-h { margin: 0 0 10px; font-size: 1rem; }
+.mboost-variants { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+.mboost-variant { display: grid; gap: 6px; align-content: start; justify-items: start; text-align: left; padding: 12px 14px; border: var(--sf-stroke) solid rgb(var(--sf-line)); border-radius: var(--sf-radius); background: rgb(var(--sf-surface)); color: inherit; font: inherit; cursor: pointer; }
+.mboost-variant:hover { border-color: rgb(var(--sf-ink) / 0.5); }
+.mboost-variant.is-on { border-color: rgb(var(--sf-brand)); box-shadow: 0 0 0 2px rgb(var(--sf-brand) / 0.35); }
+.mboost-variant > span:not(.sf-badge) { font-size: 0.88rem; color: rgb(var(--sf-muted)); text-wrap: pretty; }
+.mboost-variant__angle { font: 600 0.72rem/1 var(--sf-font-ui); text-transform: uppercase; letter-spacing: 0.06em; }
+.mboost-crops { display: grid; grid-template-columns: 1fr 0.8fr 0.56fr 1.91fr; gap: 10px; align-items: end; }
+.mboost-crops figure { margin: 0; display: grid; gap: 6px; min-width: 0; }
+.mboost-crop { width: 100%; overflow: hidden; border-radius: calc(var(--sf-radius) * 0.6); border: var(--sf-stroke) solid rgb(var(--sf-line)); background: rgb(var(--sf-ink) / 0.05); }
+.mboost-crop img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mboost-chip.is-on { background: rgb(var(--sf-ink)); color: rgb(var(--sf-surface)); border-color: rgb(var(--sf-ink)); }
+.mboost-chip:disabled { opacity: 0.45; cursor: not-allowed; }
+.mboost-split { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 10px; align-self: center; }
+.mboost-split > div, .mboost-cost > div { display: grid; gap: 2px; }
+.mboost-cost { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 14px; border-radius: var(--sf-radius); background: rgb(var(--sf-ink) / 0.05); border: var(--sf-stroke) solid rgb(var(--sf-line)); }
+.mboost-cost strong { font-size: 1.1rem; }
+.mboost-timer { display: grid; grid-template-columns: auto auto 1fr auto; gap: 10px; align-items: center; }
+.mboost-timer strong { font-size: 1.15rem; }
+.mboost-timer__bar { height: 8px; border-radius: 99px; background: rgb(var(--sf-line)); overflow: hidden; }
+.mboost-timer__bar span { display: block; height: 100%; background: rgb(var(--sf-money)); transition: width 0.4s; }
+.mboost-timer__bar span.is-late { background: rgb(var(--sf-danger)); }
+.mboost-table td, .mboost-table th { white-space: nowrap; }
+.mboost-profit strong.is-neg { color: rgb(var(--sf-danger)); }
+.mboost-recon summary { cursor: pointer; font-weight: 600; }
+.mboost-recon ul { margin: 8px 0 0; padding-left: 18px; }
+.mboost-actions { gap: 10px 16px; flex-wrap: wrap; }
+.mboost-bud { width: 96px; }
+@media (max-width: 760px) {
+  .mboost-crops { grid-template-columns: 1fr 1fr; }
+  .mboost-cost { grid-template-columns: 1fr; }
+  .mboost-timer { grid-template-columns: auto 1fr; }
+  .mboost-timer__bar { grid-column: 1 / -1; }
+}

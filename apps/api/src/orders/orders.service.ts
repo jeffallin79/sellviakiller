@@ -94,7 +94,7 @@ export class OrdersService {
         lines: { create: lineData },
         // Ad attribution (slice 3). Only kept when the shopper consented to marketing cookies.
         attribution: input.attribution?.consent
-          ? { consent: true, fbp: input.attribution.fbp ?? null, fbc: input.attribution.fbc ?? null, sourceUrl: input.attribution.sourceUrl ?? null, ip: client.ip ?? null, ua: client.userAgent?.slice(0, 500) ?? null, at: new Date().toISOString() }
+          ? { consent: true, fbp: input.attribution.fbp ?? null, fbc: input.attribution.fbc ?? null, gclid: input.attribution.gclid ?? null, ttclid: input.attribution.ttclid ?? null, ttp: input.attribution.ttp ?? null, sourceUrl: input.attribution.sourceUrl ?? null, ip: client.ip ?? null, ua: client.userAgent?.slice(0, 500) ?? null, at: new Date().toISOString() }
           : { consent: false },
       },
       include: { lines: true },

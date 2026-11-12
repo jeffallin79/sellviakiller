@@ -193,7 +193,7 @@ export class BoostService {
   // ---------------------------------------------------------------- campaigns
   async campaigns(organizationId: string, storeId: string) {
     const rows = await prisma.adCampaign.findMany({
-      where: { storeId, store: { organizationId } },
+      where: { storeId, groupId: null, store: { organizationId } },
       orderBy: { createdAt: 'desc' },
       include: { creatives: true, insights: { orderBy: { date: 'desc' }, take: 30 }, charges: true },
     });
@@ -405,7 +405,7 @@ export class BoostService {
   /** All launched campaigns; claim per campaign so two schedulers don't sync the same one at once. */
   async syncAll(now = new Date(), minIntervalMs = 5 * 60_000) {
     const due = await prisma.adCampaign.findMany({
-      where: { externalId: { not: null }, launchedAt: { not: null }, stage: { notIn: ['DRAFT'] }, OR: [{ lastSyncedAt: null }, { lastSyncedAt: { lt: new Date(now.getTime() - minIntervalMs) } }] },
+      where: { groupId: null, externalId: { not: null }, launchedAt: { not: null }, stage: { notIn: ['DRAFT'] }, OR: [{ lastSyncedAt: null }, { lastSyncedAt: { lt: new Date(now.getTime() - minIntervalMs) } }] },
       select: { id: true, lastSyncedAt: true, stage: true, updatedAt: true },
       take: 200,
     });
@@ -427,10 +427,11 @@ export class BoostService {
 
   // ---------------------------------------------------------------- fuel signals
   /** ads.low-fuel: fuel couldn't cover a charge → pause every fuel-funded campaign of the org, notify once. */
-  async onFuelEmpty(walletId: string) {
+  async onFuelEmpty(walletId: string, managedPaused = 0) {
     const w = await prisma.adWallet.findUniqueOrThrow({ where: { id: walletId } });
-    const live = await prisma.adCampaign.findMany({ where: { store: { organizationId: w.organizationId }, stage: { in: [...LIVE_STAGES] } }, include: { adAccount: { include: { connection: true } } } });
-    let paused = 0;
+    // Connect-your-own campaigns only (groupId null); managed Boost pauses its own and passes the count.
+    const live = await prisma.adCampaign.findMany({ where: { groupId: null, store: { organizationId: w.organizationId }, stage: { in: [...LIVE_STAGES] } }, include: { adAccount: { include: { connection: true } } } });
+    let paused = managedPaused;
     for (const c of live) {
       if (!usesFuel(c.adAccount.mode)) continue;
       await this.setMetaStatus(c, 'PAUSED').catch((e) => this.logger.warn(`low-fuel pause ${c.id} on Meta failed: ${e?.message ?? e}`));
@@ -456,7 +457,7 @@ export class BoostService {
     const open = await prisma.adChargeDay.aggregate({ where: { walletId, shortfallCents: { gt: 0 } }, _sum: { shortfallCents: true } });
     if ((open._sum.shortfallCents ?? 0) > 0 || w.balanceCents + w.bonusCents <= 0) return { resumed: 0 };
     await prisma.adWallet.update({ where: { id: walletId }, data: { lowFuelAt: null } });
-    const paused = await prisma.adCampaign.findMany({ where: { store: { organizationId: w.organizationId }, stage: 'PAUSED', pausedReason: 'low_fuel' }, include: { adAccount: { include: { connection: true } } } });
+    const paused = await prisma.adCampaign.findMany({ where: { groupId: null, store: { organizationId: w.organizationId }, stage: 'PAUSED', pausedReason: 'low_fuel' }, include: { adAccount: { include: { connection: true } } } });
     let resumed = 0;
     for (const c of paused) {
       try {

@@ -214,6 +214,7 @@ model Store {
   adAccounts    AdAccount[]
   campaigns     AdCampaign[]
   conversions   ConversionEvent[]
+  boostGroups   BoostGroup[]
 
   @@index([organizationId])
   @@index([status])
@@ -683,32 +684,162 @@ model AdConnection {
 }
 
 model AdAccount {
-  id            String        @id @default(cuid())
-  storeId       String
-  channel       AdChannel
-  mode          AdAccountMode
-  externalId    String // act_123…
-  name          String
-  currency      String        @default("USD")
-  timezone      String?
-  status        String        @default("active") // active | disabled | disconnected
+  id                   String        @id @default(cuid())
+  storeId              String
+  channel              AdChannel
+  mode                 AdAccountMode
+  externalId           String // act_123…
+  name                 String
+  currency             String        @default("USD")
+  timezone             String?
+  status               String        @default("active") // active | disabled | disconnected
   /// OWNED: AdConnection id holding the token; MANAGED: platform system user
-  tokenRef      String?
-  pixelId       String?
-  pixelName     String?
+  tokenRef             String?
+  pixelId              String?
+  pixelName            String?
   /// Facebook Page the ads run as (object_story_spec.page_id)
-  pageId        String?
-  pageName      String?
+  pageId               String?
+  pageName             String?
   /// Meta Events Manager "Test events" code; sent as test_event_code while set
-  testEventCode String?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  testEventCode        String?
+  // ---- managed Boost (slice 4): StoreForge-owned account per merchant per channel ----
+  /// provisioning | ready | pending_review | failed
+  provisionStatus      String        @default("ready")
+  /// Idempotency key for account creation (sf-acct-<storeId>-<channel>); the name carries [sf:<key>]
+  provisionKey         String?       @unique
+  provisionLockedUntil DateTime?
+  lastError            String?
+  /// Google: Merchant Center sub-account + API data source; TikTok/Meta: product catalog
+  merchantCenterId     String?
+  dataSourceId         String?
+  catalogId            String?
+  feedSyncedAt         DateTime?
+  feedStatus           Json?
+  /// Google: conversion action resource + gtag send_to ("AW-123/abc"); TikTok: pixel code in pixelId
+  conversionActionId   String?
+  conversionTag        String?
+  /// Float protection: the platform-side ceiling we last applied (Meta spend_cap / Google account
+  /// budget / TikTok prepaid balance), in minor units of total lifetime spend
+  capMinor             Int?
+  capAppliedAt         DateTime?
+  capLockedUntil       DateTime?
+  capDirty             Boolean       @default(false)
+  /// Google: billing setup resource (consolidated billing) the account budget hangs off
+  billingRef           String?
+  /// Platform-reported lifetime spend of the whole account (amount_spent / cost / BC cost)
+  lifetimeSpendCents   Int           @default(0)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
 
-  store      Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  connection AdConnection? @relation(fields: [tokenRef], references: [id], onDelete: SetNull)
+  store      Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  connection AdConnection?        @relation(fields: [tokenRef], references: [id], onDelete: SetNull)
   campaigns  AdCampaign[]
+  deliveries ConversionDelivery[]
 
   @@unique([storeId, channel, mode])
+}
+
+/// Managed Boost (slice 4): one merchant "pick" (product + copy + budget) fanned out to one
+/// AdCampaign per channel. pickedAt → launchedAt is the "pick → launch < 3 min" measure.
+model BoostGroup {
+  id                String      @id @default(cuid())
+  storeId           String
+  storeProductId    String
+  /// Merchant's idempotency key for "create draft"
+  requestId         String
+  /// DRAFT | LAUNCHING | LIVE | PAUSED | FAILED
+  status            String      @default("DRAFT")
+  channels          AdChannel[]
+  /// Total daily budget across channels and the split (channel → cents)
+  dailyBudgetCents  Int         @default(0)
+  split             Json        @default("{}")
+  /// 3–5 drafted copy variants [{headline, body, policy}] and image crops [{ratio,url,w,h}]
+  variants          Json        @default("[]")
+  assets            Json        @default("[]")
+  variantIndex      Int         @default(0)
+  /// pass | warn | block (pre-launch policy check of the chosen variant)
+  policyResult      String      @default("pending")
+  /// Budget ladder (cumulative spend steps); off when the merchant lowers the budget by hand
+  autoLadder        Boolean     @default(true)
+  ladderStep        Int         @default(0)
+  pickedAt          DateTime    @default(now())
+  launchRequestedAt DateTime?
+  launchedAt        DateTime?
+  launchMs          Int?
+  lastError         String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  store     Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  campaigns AdCampaign[]
+  policy    PolicyCheck[]
+
+  @@unique([storeId, requestId])
+  @@index([status])
+}
+
+/// Pre-launch policy scan (prohibited categories, claims, landing page) + platform review results
+model PolicyCheck {
+  id         String   @id @default(cuid())
+  groupId    String?
+  creativeId String?
+  /// rule ids that fired, e.g. ["claims.health_cure", "landing.no_eta"]
+  rules      String[]
+  /// pass | warn | block
+  result     String
+  findings   Json     @default("[]")
+  source     String   @default("storeforge") // storeforge | meta | google | tiktok
+  createdAt  DateTime @default(now())
+
+  group BoostGroup? @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([groupId])
+}
+
+/// ads.reconcile (daily 02:00 UTC): platform-reported spend vs what the wallet was charged
+model AdReconcile {
+  id                 String   @id @default(cuid())
+  campaignId         String
+  date               DateTime @db.Date
+  platformSpendCents Int
+  /// spend the wallet had been charged (debited + shortfall) before this run
+  chargedSpendCents  Int
+  /// |platform − charged| / platform, basis points (100 = 1%)
+  driftBps           Int
+  adjustedCents      Int      @default(0)
+  /// ok | adjusted | alert
+  status             String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  campaign AdCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, date])
+}
+
+/// One server-side conversion per ad account (managed Meta CAPI, Google enhanced conversions,
+/// TikTok Events API). Same event id as the browser tag for dedupe.
+model ConversionDelivery {
+  id                String    @id @default(cuid())
+  conversionEventId String
+  adAccountId       String
+  channel           AdChannel
+  /// pending | sent | failed | skipped
+  status            String    @default("pending")
+  attempts          Int       @default(0)
+  nextAttemptAt     DateTime  @default(now())
+  lastError         String?
+  trace             String?
+  testCode          String?
+  sentAt            DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  event   ConversionEvent @relation(fields: [conversionEventId], references: [id], onDelete: Cascade)
+  account AdAccount       @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([conversionEventId, adAccountId])
+  @@index([status, nextAttemptAt])
 }
 
 model AdCampaign {
@@ -728,6 +859,10 @@ model AdCampaign {
   ladderStep         Int             @default(0)
   /// Merchant's idempotency key for "create campaign"
   requestId          String
+  /// Managed Boost group (slice 4); null for "connect your own" campaigns
+  groupId            String?
+  /// Channel-specific ids saved step by step (Google budget/asset group, TikTok ad group…)
+  externalRefs       Json            @default("{}")
   pausedReason       String? // merchant | low_fuel | rejected | disconnected
   lastError          String?
   launchedAt         DateTime?
@@ -737,14 +872,17 @@ model AdCampaign {
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
 
-  store     Store            @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  adAccount AdAccount        @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
-  creatives AdCreative[]
-  insights  AdInsightDaily[]
-  charges   AdChargeDay[]
+  store      Store            @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  adAccount  AdAccount        @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+  group      BoostGroup?      @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  creatives  AdCreative[]
+  insights   AdInsightDaily[]
+  charges    AdChargeDay[]
+  reconciles AdReconcile[]
 
   @@unique([storeId, requestId])
   @@index([stage])
+  @@index([groupId])
 }
 
 model AdCreative {
@@ -755,6 +893,8 @@ model AdCreative {
   headline     String
   body         String
   policyStatus String   @default("pending") // pending | approved | rejected
+  /// Image crops for this creative [{ratio:"1:1"|"4:5"|"9:16", url, w, h}]
+  assets       Json     @default("[]")
   createdAt    DateTime @default(now())
 
   campaign AdCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
@@ -817,7 +957,8 @@ model ConversionEvent {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  store      Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  deliveries ConversionDelivery[]
 
   @@index([storeId])
 }
