@@ -70,10 +70,10 @@ function DomainCard({ d, onChange, busy, act }: { d: Domain; onChange: () => voi
   const ownership = d.records.filter((r) => r.purpose === 'ownership');
   const row = (r: Rec, i: number) => (
     <tr key={`${r.type}-${r.name}-${r.value}-${i}`}>
-      <td><Badge tone={r.purpose === 'ownership' ? 'info' : 'brand'}>{r.type}</Badge></td>
-      <td><CopyCell text={r.name} label={`${r.type} name`} /></td>
-      <td><CopyCell text={r.value} label={`${r.type} value`} /></td>
-      <td><RecordState ok={r.ok} /></td>
+      <td data-label="Type"><Badge tone={r.purpose === 'ownership' ? 'info' : 'brand'}>{r.type}</Badge></td>
+      <td data-label="Name / host"><CopyCell text={r.name} label={`${r.type} name`} /></td>
+      <td data-label="Value"><CopyCell text={r.value} label={`${r.type} value`} /></td>
+      <td data-label="Status"><RecordState ok={r.ok} /></td>
     </tr>
   );
   return (

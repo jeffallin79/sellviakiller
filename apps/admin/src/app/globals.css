@@ -126,6 +126,19 @@
 .rectable td { vertical-align: middle; }
 .recval { font-size: 0.82rem; word-break: break-all; }
 .copycell { display: flex; align-items: center; gap: 6px; justify-content: space-between; }
+/* Phones: each DNS record becomes a labelled card (name/value get the full width to copy). */
+@media (max-width: 640px) {
+  .rectable thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .rectable, .rectable tbody, .rectable tr, .rectable td { display: block; width: 100%; }
+  .rectable tr { padding: 10px 12px; border-bottom: 1px solid rgb(var(--sf-line)); }
+  .rectable tr:last-child { border-bottom: 0; }
+  .rectable td { padding: 4px 0; border: 0; }
+  .rectable td::before { content: attr(data-label); display: block; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: rgb(var(--sf-muted)); margin-bottom: 2px; }
+  .rectable td[data-label="Type"], .rectable td[data-label="Status"] { display: inline-block; width: auto; margin-right: 12px; }
+  .rectable td[data-label="Type"]::before, .rectable td[data-label="Status"]::before { display: none; }
+  .recval { font-size: 0.86rem; }
+  .copycell { align-items: flex-start; }
+}
 .recstate { display: inline-flex; align-items: center; gap: 4px; font-size: 0.84rem; font-weight: 600; white-space: nowrap; }
 .recstate--ok { color: rgb(var(--sf-ok-ink)); }
 .recstate--bad { color: rgb(var(--sf-bad-ink)); }
