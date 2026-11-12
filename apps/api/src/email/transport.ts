@@ -11,6 +11,8 @@ export type OutgoingEmail = {
   text: string;
   idempotencyKey: string;
   tags?: Record<string, string>;
+  /** Extra headers (List-Unsubscribe / List-Unsubscribe-Post on marketing mail) */
+  headers?: Record<string, string>;
 };
 
 export interface EmailTransport {
@@ -35,6 +37,7 @@ export class ResendTransport implements EmailTransport {
         subject: m.subject,
         html: m.html,
         text: m.text,
+        ...(m.headers && Object.keys(m.headers).length ? { headers: m.headers } : {}),
         ...(m.tags ? { tags: Object.entries(m.tags).map(([name, value]) => ({ name, value: value.replace(/[^A-Za-z0-9_-]/g, '_') })) } : {}),
       }),
       signal: AbortSignal.timeout(15000),

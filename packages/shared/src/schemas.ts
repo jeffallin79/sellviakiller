@@ -63,6 +63,10 @@ export const CheckoutSchema = z.object({
       ttp: z.string().max(200).regex(/^[\w.-]+$/).optional(),
     })
     .optional(),
+  /** Slice 5: the storefront's cart id, so a paid checkout closes its abandoned-cart reminders */
+  cartToken: z.string().regex(/^[A-Za-z0-9_-]{16,64}$/).optional(),
+  /** Slice 5: the shopper ticked "email me a reminder" (stored with the exact wording) */
+  cartConsent: z.boolean().optional(),
 });
 
 export const ApproveFulfillmentSchema = z.object({

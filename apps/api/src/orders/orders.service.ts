@@ -18,6 +18,7 @@ import { enqueueRouteFulfillment } from '../jobs/queues';
 import { EmailService } from '../email/email.service';
 import { DomainsService } from '../domains/domains.service';
 import { ConversionsService } from '../ads/conversions.service';
+import { cartCheckoutStarted, cartOrderPaid } from '../carts/lifecycle';
 
 @Injectable()
 export class OrdersService {
@@ -99,6 +100,8 @@ export class OrdersService {
       },
       include: { lines: true },
     });
+    // Slice 5: link the bag to this checkout (and save it if the shopper opted in to a reminder)
+    await cartCheckoutStarted(store.id, input, { id: order.id, currency: order.currency, subtotalCents, lines: order.lines });
 
     // Return to the store's own domain when it has one (slice 2), else the platform URL.
     const urls = await DomainsService.storeUrls(store);
@@ -204,6 +207,8 @@ export class OrdersService {
     // 3) Meta Conversions API Purchase (event_id order_<id>, shared with the browser Pixel). The
     //    row is written here; sending is background with retries (capi.dispatch). Never throws.
     await this.conversions.orderPaid(orderId);
+    // 4) Close the shopper's open bags so no "you left something" goes out after they bought.
+    await cartOrderPaid(orderId);
     return { ...order, transitioned: true };
   }
 

@@ -8,10 +8,12 @@ import { auth } from './auth/better-auth';
 import { ZodValidationFilter } from './common/zod.filter';
 import { assertTlsConfig } from './domains/tls';
 import { assertTokenKey } from './ads/token-vault';
+import { assertEmailLinkSecret } from './email/links';
 
 async function bootstrap() {
   assertTlsConfig(); // e.g. caddy without DOMAIN_TLS_ASK_TOKEN → refuse to start
   assertTokenKey(); // ADS_TOKEN_KEY required outside NODE_ENV=development|test
+  assertEmailLinkSecret(); // EMAIL_LINK_SECRET (unsubscribe / recovery links) likewise
   const app = await NestFactory.create(AppModule, { rawBody: true });
   const expressApp = app.getHttpAdapter().getInstance();
 

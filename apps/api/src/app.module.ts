@@ -13,6 +13,8 @@ import { ExportModule } from './export/export.module';
 import { JobsModule } from './jobs/jobs.module';
 import { DomainsModule } from './domains/domains.module';
 import { EmailModule } from './email/email.module';
+import { CartsModule } from './carts/carts.module';
+import { ResearchModule } from './research/research.module';
 import { HealthController } from './health.controller';
 
 @Module({
@@ -31,6 +33,8 @@ import { HealthController } from './health.controller';
     JobsModule,
     DomainsModule,
     EmailModule,
+    CartsModule,
+    ResearchModule,
   ],
   controllers: [HealthController],
 })

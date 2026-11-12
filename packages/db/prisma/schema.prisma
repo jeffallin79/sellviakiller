@@ -38,12 +38,17 @@ enum EmailKind {
   ORDER_SHIPPED
   ORDER_DELIVERED
   ORDER_REFUNDED
+  /// Slice 5: abandoned-cart recovery (marketing: needs consent, honours unsubscribe)
+  CART_REMINDER_1
+  CART_REMINDER_2
 }
 
 enum EmailStatus {
   QUEUED
   SENT
   FAILED
+  /// Not sent on purpose (cart converted, consent withdrawn or address unsubscribed before delivery)
+  CANCELLED
 }
 
 enum FulfillmentStatus {
@@ -205,16 +210,22 @@ model Store {
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
 
-  organization  Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  storeProducts StoreProduct[]
-  orders        Order[]
-  domains       Domain[]
-  emails        EmailMessage[]
-  adConnections AdConnection[]
-  adAccounts    AdAccount[]
-  campaigns     AdCampaign[]
-  conversions   ConversionEvent[]
-  boostGroups   BoostGroup[]
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  storeProducts  StoreProduct[]
+  orders         Order[]
+  domains        Domain[]
+  emails         EmailMessage[]
+  adConnections  AdConnection[]
+  adAccounts     AdAccount[]
+  campaigns      AdCampaign[]
+  conversions    ConversionEvent[]
+  boostGroups    BoostGroup[]
+  carts          Cart[]
+  suppressions   EmailSuppression[]
+  /// Slice 5: send abandoned-cart reminders (only to shoppers who opted in)
+  cartRecovery   Boolean            @default(true)
+  /// Postal address printed in marketing emails (CAN-SPAM / CASL). Reminders don't go out without it.
+  mailingAddress String?
 
   @@index([organizationId])
   @@index([status])
@@ -257,6 +268,7 @@ model Product {
   supplier      Supplier                 @relation(fields: [supplierId], references: [id])
   storeProducts StoreProduct[]
   mappings      SupplierProductMapping[]
+  score         ProductScore?
 
   @@unique([supplierId, externalId])
   @@index([sku])
@@ -619,14 +631,19 @@ model EmailMessage {
   sentAt            DateTime?
   /// Send lease: whoever holds it delivers (inline send, worker and outbox sweeper never double-send)
   lockedUntil       DateTime?
+  /// Slice 5: cart reminders link back to their cart; extra headers (List-Unsubscribe, RFC 8058)
+  cartId            String?
+  headers           Json?
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
 
   store Store? @relation(fields: [storeId], references: [id], onDelete: SetNull)
   order Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  cart  Cart?  @relation(fields: [cartId], references: [id], onDelete: SetNull)
 
   @@index([storeId, createdAt])
   @@index([orderId])
+  @@index([cartId])
 }
 
 // ---------------- Phase 1 slice 3: Boost (Meta connect-your-own) + Ad Fuel jobs ----------------
@@ -961,4 +978,115 @@ model ConversionEvent {
   deliveries ConversionDelivery[]
 
   @@index([storeId])
+}
+
+// ---------------- Phase 1 slice 5: research tools + abandoned-cart recovery ----------------
+
+enum CartStatus {
+  /// Shopper hasn't paid yet; reminders may go out if they opted in
+  OPEN
+  /// Paid (this cart's checkout, or another paid order from the same address afterwards)
+  CONVERTED
+  /// Shopper unsubscribed; email scrubbed
+  OPTED_OUT
+  /// No activity for CART_EXPIRE_DAYS (or every product left the store); email scrubbed
+  EXPIRED
+}
+
+/// Server copy of a storefront bag, written only once the shopper has typed an email AND ticked
+/// "email me a reminder". Without consent nothing identifying is stored.
+model Cart {
+  id             String     @id @default(cuid())
+  storeId        String
+  /// Random id the storefront keeps in localStorage (one per store per browser)
+  token          String
+  email          String?
+  /// sha256(lowercased email): kept after the address is scrubbed, for suppression and per-address caps
+  emailHash      String?
+  customerName   String?
+  /// [{ storeProductId, quantity, title, unitPriceCents }] priced server-side
+  lines          Json
+  itemCount      Int        @default(0)
+  subtotalCents  Int        @default(0)
+  currency       String     @default("USD")
+  consent        Boolean    @default(false)
+  consentAt      DateTime?
+  /// Exact wording the shopper agreed to
+  consentText    String?
+  status         CartStatus @default(OPEN)
+  lastActivityAt DateTime   @default(now())
+  /// Set (claimed) in the same transaction that writes the reminder to the outbox
+  reminder1At    DateTime?
+  reminder2At    DateTime?
+  /// Shopper opened the recovery link
+  recoveredAt    DateTime?
+  /// Latest checkout started from this cart
+  orderId        String?
+  convertedAt    DateTime?
+  /// Paid after a reminder went out → counted as recovered revenue
+  recoveredCents Int?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  store  Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  emails EmailMessage[]
+
+  @@unique([storeId, token])
+  @@index([status, lastActivityAt])
+  @@index([storeId, createdAt])
+  @@index([storeId, emailHash])
+  @@index([orderId])
+}
+
+/// Per-store marketing suppression list (unsubscribes). Order emails are transactional and still go out.
+model EmailSuppression {
+  id        String   @id @default(cuid())
+  storeId   String
+  emailHash String
+  /// unsubscribe | one_click | merchant
+  reason    String
+  createdAt DateTime @default(now())
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, emailHash])
+}
+
+/// Research score for a catalog product (blueprint §3 slice 5). Recomputed on demand / daily; one row per product.
+model ProductScore {
+  id              String   @id @default(cuid())
+  productId       String   @unique
+  /// 0–100 composite: 35% trend, 30% margin, 20% room to compete (100 − saturation), 15% shipping speed
+  score           Int
+  trendScore      Int
+  marginScore     Int
+  /// 0–100, higher = more advertisers already running ads for this
+  saturationScore Int
+  etaScore        Int
+  keyword         String
+  /// Paid units per day across StoreForge shops, last 14 days
+  orderVelocity   Float    @default(0)
+  /// Latest search interest (0–100) and 12-week change in points
+  searchIndex     Int?
+  searchChange    Float?
+  /// Active ads found in the ad library for the keyword
+  adCount         Int?
+  /// Unit economics at the default assumptions (see margin calculator)
+  profitCents     Int
+  marginPct       Float
+  breakEvenRoas   Float?
+  /// { trends: 'stub'|'serpapi', adLibrary: 'stub'|'meta', llm: 'stub'|'openai' }
+  sources         Json
+  /// Series and assumptions used, for the admin charts and auditability
+  inputs          Json
+  insight         String   @default("")
+  /// Ad angle drafts (LLM or template), never auto-published
+  angles          Json?
+  computedAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([score])
 }

@@ -4,6 +4,7 @@ import { renderOrderEmail, trackingUrl, type EmailContext } from './templates';
 import { getEmailTransport, PermanentEmailError } from './transport';
 import { enqueueEmailSend } from '../jobs/queues';
 import { DomainsService } from '../domains/domains.service';
+import { cartEmailBlocker } from './cart-guard';
 
 export const MAX_EMAIL_ATTEMPTS = 5;
 /** How long one sender holds a message before another may retry it (a crashed sender's lease expires). */
@@ -14,6 +15,14 @@ const retryAfterMs = (attempts: number) => 30_000 * 2 ** Math.max(0, attempts - 
 /** Header-safe single line: no CR/LF (header injection), collapsed whitespace, RFC 5322-friendly length. */
 export function headerLine(s: string, max = 200) {
   return s.replace(/[\r\n]+/g, ' ').replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s{2,}/g, ' ').trim().slice(0, max);
+}
+/** Stored extra headers → safe map (only known header names, single-line values). */
+export function headerMap(h: unknown): Record<string, string> | undefined {
+  if (!h || typeof h !== 'object') return undefined;
+  const allowed = new Set(['List-Unsubscribe', 'List-Unsubscribe-Post']);
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(h as Record<string, unknown>)) if (allowed.has(k) && typeof v === 'string') out[k] = headerLine(v, 900);
+  return Object.keys(out).length ? out : undefined;
 }
 export const orderNumber = (orderId: string) => orderId.slice(-8).toUpperCase();
 
@@ -35,7 +44,7 @@ export function fromHeader(storeName: string) {
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
 
-  async orderEvent(kind: EmailKind, orderId: string, opts: { refundId?: string; refundAmountCents?: number } = {}) {
+  async orderEvent(kind: Exclude<EmailKind, 'CART_REMINDER_1' | 'CART_REMINDER_2'>, orderId: string, opts: { refundId?: string; refundAmountCents?: number } = {}) {
     try {
       const dedupeKey = kind === 'ORDER_REFUNDED' ? `${kind}:${orderId}:${opts.refundId ?? 'full'}` : `${kind}:${orderId}`;
       const existing = await prisma.emailMessage.findUnique({ where: { dedupeKey } });
@@ -87,7 +96,17 @@ export class EmailService {
   /** Worker body. Throws on retryable failure so BullMQ backs off and retries. */
   async send(emailId: string): Promise<void> {
     const m = await prisma.emailMessage.findUnique({ where: { id: emailId } });
-    if (!m || m.status === EmailStatus.SENT) return;
+    if (!m || m.status === EmailStatus.SENT || m.status === EmailStatus.CANCELLED) return;
+    // Marketing mail is re-checked right before delivery: the cart may have been paid, or the
+    // shopper may have unsubscribed / withdrawn consent since the reminder was queued.
+    const blocked = await cartEmailBlocker(m);
+    if (blocked) {
+      await prisma.emailMessage.updateMany({
+        where: { id: emailId, status: { notIn: [EmailStatus.SENT, EmailStatus.CANCELLED] } },
+        data: { status: EmailStatus.CANCELLED, lastError: `not sent: ${blocked}`, lockedUntil: null },
+      });
+      return;
+    }
     const transport = getEmailTransport();
     const now = new Date();
     const claim = await prisma.emailMessage.updateMany({
@@ -107,6 +126,7 @@ export class EmailService {
         text: m.text,
         idempotencyKey: `sf-email-${m.id}`,
         tags: { kind: m.kind, ...(m.storeId ? { store: m.storeId } : {}) },
+        headers: headerMap(m.headers),
       });
       await prisma.emailMessage.update({
         where: { id: emailId },
@@ -127,7 +147,7 @@ export class EmailService {
   async retry(organizationId: string, id: string) {
     const m = await prisma.emailMessage.findFirst({ where: { id, store: { organizationId } } });
     if (!m) throw new NotFoundException('Email not found');
-    if (m.status !== EmailStatus.SENT) {
+    if (m.status !== EmailStatus.SENT && m.status !== EmailStatus.CANCELLED) {
       await prisma.emailMessage.update({ where: { id }, data: { status: EmailStatus.QUEUED } });
       const q = await enqueueEmailSend(id);
       if (q.inline) await this.send(id).catch(() => null);
@@ -162,7 +182,7 @@ export class EmailService {
       where: { store: { organizationId }, ...(opts.storeId ? { storeId: opts.storeId } : {}), ...(opts.orderId ? { orderId: opts.orderId } : {}) },
       orderBy: { createdAt: 'desc' },
       take: Math.min(opts.take ?? 50, 200),
-      select: { id: true, kind: true, to: true, from: true, subject: true, status: true, transport: true, attempts: true, lastError: true, sentAt: true, createdAt: true, orderId: true, storeId: true },
+      select: { id: true, kind: true, cartId: true, to: true, from: true, subject: true, status: true, transport: true, attempts: true, lastError: true, sentAt: true, createdAt: true, orderId: true, storeId: true },
     });
   }
 
@@ -172,7 +192,7 @@ export class EmailService {
     return m;
   }
 
-  private async buildContext(orderId: string, kind: EmailKind, opts: { refundAmountCents?: number }) {
+  private async buildContext(orderId: string, kind: Exclude<EmailKind, 'CART_REMINDER_1' | 'CART_REMINDER_2'>, opts: { refundAmountCents?: number }) {
     const o = await prisma.order.findUnique({
       where: { id: orderId },
       include: {

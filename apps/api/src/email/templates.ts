@@ -228,3 +228,116 @@ export function renderOrderEmail(kind: EmailKindName, c: EmailContext): Rendered
 
   return { subject: k.subject, html, text, preheader: k.preheader };
 }
+
+// ---------------- Slice 5: abandoned-cart reminders (marketing) ----------------
+
+export type CartEmailContext = {
+  store: { name: string; shopUrl: string; mailingAddress: string };
+  cart: {
+    id: string;
+    customerName: string | null;
+    currency: string;
+    lines: { title: string; quantity: number; unitPriceCents: number }[];
+    subtotalCents: number;
+    consentAt: Date | null;
+  };
+  /** Restores the bag in the browser (signed) */
+  recoverUrl: string;
+  /** One-click unsubscribe page (signed) */
+  unsubscribeUrl: string;
+  /** Slowest delivery window among the items */
+  eta: { minDays: number; maxDays: number } | null;
+};
+
+/**
+ * Two reminders, plain and honest: no discount bait, no countdowns, no "only 2 left". The footer
+ * says why the shopper is getting it, has a one-click unsubscribe and the shop's postal address.
+ */
+export function renderCartEmail(step: 1 | 2, c: CartEmailContext): Rendered {
+  const p = emailPalette();
+  const s = c.store.name;
+  const first = (c.cart.customerName ?? '').trim().split(/\s+/)[0] || '';
+  const cur = c.cart.currency;
+  const count = c.cart.lines.reduce((a, l) => a + l.quantity, 0);
+  const k =
+    step === 1
+      ? {
+          subject: `You left ${count === 1 ? 'something' : `${count} items`} in your ${s} bag`,
+          kicker: 'Saved for you',
+          title: first ? `${first}, your bag is still here.` : 'Your bag is still here.',
+          preheader: `${money(c.cart.subtotalCents, cur)} in your bag. Pick up where you left off.`,
+          body: [
+            `You asked us to remind you, so here it is. Your bag at ${s} is saved just as you left it.`,
+            `Prices and stock can change. You'll see the current price before you pay.`,
+          ],
+        }
+      : {
+          subject: `Still thinking it over? Your ${s} bag is saved`,
+          kicker: 'Last reminder',
+          title: 'No rush. Here is your bag one more time.',
+          preheader: `This is the last reminder about your bag at ${s}.`,
+          body: [
+            `This is the second and last reminder you'll get about this bag.`,
+            `If you have a question about sizing, shipping or returns, just reply. It goes straight to ${s}.`,
+          ],
+        };
+  const since = c.cart.consentAt ? c.cart.consentAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : null;
+  const why = `You're getting this because you ticked "email me a reminder" at ${s}${since ? ` on ${since}` : ''}.`;
+  const items = c.cart.lines
+    .map(
+      (l) =>
+        `<tr><td style="padding:10px 0;border-bottom:2px solid ${p.line};font:500 14px/1.4 ${FONT_UI};color:${p.ink}">${esc(l.title)} <span style="color:${p.muted}">× ${l.quantity}</span></td><td align="right" style="padding:10px 0;border-bottom:2px solid ${p.line};font:500 14px/1.4 ${FONT_MONO};color:${p.ink};white-space:nowrap">${esc(money(l.unitPriceCents * l.quantity, cur))}</td></tr>`,
+    )
+    .join('');
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light only"><meta name="supported-color-schemes" content="light"><title>${esc(k.subject)}</title></head>
+<body style="margin:0;padding:0;background:${p.canvas};-webkit-text-size-adjust:100%">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:${p.canvas}">${esc(k.preheader)}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${p.canvas}"><tr><td align="center" style="padding:28px 12px">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px">
+  <tr><td style="background:${p.band};border-radius:18px 18px 0 0;padding:22px 28px">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td style="font:800 22px/1.1 ${FONT_DISPLAY};letter-spacing:-.02em;color:${p.onBand}"><span style="display:inline-block;width:12px;height:12px;border-radius:4px;background:${p.money};margin-right:8px;vertical-align:1px"></span>${esc(s)}</td>
+      <td align="right" style="font:500 12px/1.2 ${FONT_MONO};color:${p.bandMuted};letter-spacing:.04em">YOUR BAG</td>
+    </tr></table>
+  </td></tr>
+  <tr><td style="background:${p.surface};border:2px solid ${p.line};border-top:0;border-radius:0 0 18px 18px;padding:30px 28px 28px">
+    <div style="font:600 12px/1.4 ${FONT_MONO};letter-spacing:.1em;text-transform:uppercase;color:${p.moneyInk}">${esc(k.kicker)}</div>
+    <h1 style="margin:8px 0 12px;font:800 30px/1.12 ${FONT_DISPLAY};letter-spacing:-.025em;color:${p.ink}">${esc(k.title)}</h1>
+    ${k.body.map((t) => `<p style="margin:0 0 10px;font:400 16px/1.55 ${FONT_UI};color:${p.ink}">${esc(t)}</p>`).join('')}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px">${items}</table>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px"><tr><td style="padding:6px 0;font:700 14px/1.4 ${FONT_UI};color:${p.ink}">Items</td><td align="right" style="padding:6px 0;font:700 14px/1.4 ${FONT_MONO};color:${p.ink}">${esc(money(c.cart.subtotalCents, cur))}</td></tr></table>
+    ${c.eta ? `<p style="margin:10px 0 0;font:400 14px/1.5 ${FONT_UI};color:${p.muted}">Ships from the supplier's warehouse and arrives in ${c.eta.minDays}–${c.eta.maxDays} days after you order.</p>` : ''}
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:24px 0 6px"><tr><td style="background:${p.brand};border-radius:14px;box-shadow:0 3px 0 ${p.band}">
+      <a href="${esc(c.recoverUrl)}" style="display:inline-block;padding:13px 22px;font:700 15px/1 ${FONT_UI};color:${p.onBrand};text-decoration:none">Return to your bag &rarr;</a>
+    </td></tr></table>
+  </td></tr>
+  <tr><td style="padding:18px 28px 0;font:400 13px/1.6 ${FONT_UI};color:${p.muted}">
+    ${esc(why)} <a href="${esc(c.unsubscribeUrl)}" style="color:${p.ink};font-weight:600">Unsubscribe</a> and ${esc(s)} won't email you reminders again.<br>
+    ${esc(s)} · ${esc(c.store.mailingAddress)}<br>
+    Shop built on StoreForge.
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>`;
+  const text = [
+    `${s} · Your bag`,
+    '',
+    k.kicker.toUpperCase(),
+    k.title,
+    '',
+    ...k.body,
+    '',
+    'In your bag:',
+    ...c.cart.lines.map((l) => `  ${l.title} × ${l.quantity}  ${money(l.unitPriceCents * l.quantity, cur)}`),
+    `  Items  ${money(c.cart.subtotalCents, cur)}`,
+    ...(c.eta ? ['', `Arrives in ${c.eta.minDays}–${c.eta.maxDays} days after you order.`] : []),
+    '',
+    `Return to your bag: ${c.recoverUrl}`,
+    '',
+    why,
+    `Unsubscribe: ${c.unsubscribeUrl}`,
+    `${s} · ${c.store.mailingAddress}`,
+  ].join('\n');
+  return { subject: k.subject, html, text, preheader: k.preheader };
+}
