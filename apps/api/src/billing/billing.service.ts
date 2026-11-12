@@ -72,8 +72,8 @@ export class BillingService {
       priceId,
       email: userEmail,
       customerId,
-      successUrl: `${adminUrl()}/dashboard/billing?checkout=success`,
-      cancelUrl: `${adminUrl()}/dashboard/billing?checkout=cancelled`,
+      successUrl: `${adminUrl()}/billing?checkout=success`,
+      cancelUrl: `${adminUrl()}/billing?checkout=cancelled`,
     });
     return {
       subscription: existing,
@@ -85,7 +85,7 @@ export class BillingService {
 
   async portal(organizationId: string) {
     const provider = getPaymentProvider();
-    const returnUrl = `${adminUrl()}/dashboard/billing`;
+    const returnUrl = `${adminUrl()}/billing`;
     if (provider.kind === 'stub') return provider.createBillingPortal({ customerId: 'stub', returnUrl });
     const org = await prisma.organization.findUniqueOrThrow({ where: { id: organizationId } });
     if (!org.billingCustomerId) throw new BadRequestException('No billing account yet — pick a plan first');

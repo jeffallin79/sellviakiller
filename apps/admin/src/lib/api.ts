@@ -14,7 +14,12 @@ export async function api<T = unknown>(
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || res.statusText);
+    let message = text || res.statusText;
+    try {
+      const j = JSON.parse(text);
+      message = Array.isArray(j.message) ? j.message.join(', ') : j.message ?? message;
+    } catch { /* not JSON */ }
+    throw new Error(message);
   }
   const ct = res.headers.get('content-type') ?? '';
   if (ct.includes('application/json')) return res.json();

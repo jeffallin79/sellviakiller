@@ -1,0 +1,40 @@
+{
+  "name": "@storeforge/ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "StoreForge \"Garnet & Saffron\" design system: tokens, fonts, base styles, icons, small React primitives.",
+  "exports": {
+    "./tokens.css": "./tokens.css",
+    "./base.css": "./base.css",
+    "./fonts": "./src/fonts.ts",
+    "./tailwind.preset": "./tailwind.preset.ts",
+    "./tokens": "./src/tokens.ts",
+    "./icons": "./src/icons.tsx",
+    "./components": "./src/components.tsx",
+    "./theme": "./src/theme.tsx",
+    "./theme-script": "./src/theme-script.tsx",
+    "./product-image": "./src/product-image.tsx"
+  },
+  "scripts": {
+    "build": "node scripts/check-colors.mjs .",
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "node scripts/check-colors.mjs ."
+  },
+  "dependencies": {
+    "@fontsource-variable/bricolage-grotesque": "^5.3.0",
+    "@fontsource-variable/instrument-sans": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@phosphor-icons/react": "^2.1.10"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "react": "^19.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

@@ -32,8 +32,8 @@ export class PayoutsService {
     }
     const link = await provider.createPayoutOnboardingLink({
       accountId,
-      refreshUrl: `${adminUrl()}/dashboard?payouts=refresh`,
-      returnUrl: `${adminUrl()}/dashboard?payouts=return`,
+      refreshUrl: `${adminUrl()}/launchpad?payouts=refresh`,
+      returnUrl: `${adminUrl()}/launchpad?payouts=return`,
     });
     if (provider.kind === 'stub') await this.refresh(organizationId);
     return { url: link.url, accountId };

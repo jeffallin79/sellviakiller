@@ -1,169 +1,96 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { api } from '@/lib/api';
+import { Icon } from '@storeforge/ui/icons';
+import { Badge, Collage, Money } from '@storeforge/ui/components';
+import { ProductImage } from '@storeforge/ui/product-image';
+import { ShopFrame } from '@/components/ShopFrame';
+import { useCart } from '@/lib/cart';
+import { useStore, titleOf, type StoreProduct } from '@/lib/store';
 
-type StoreProduct = {
-  id: string;
-  title?: string;
-  priceCents: number;
-  product: {
-    title: string;
-    imageUrl?: string;
-    etaDaysMin: number;
-    etaDaysMax: number;
-    sourcingLabel: string;
-    description: string;
-  };
-};
-
-export default function StorePage() {
-  const params = useParams();
-  const slug = String(params.slug);
-  const [products, setProducts] = useState<StoreProduct[]>([]);
-  const [store, setStore] = useState<any>(null);
-  const [cart, setCart] = useState<Record<string, number>>({});
-  const [checkoutOpen, setCheckoutOpen] = useState(false);
-  const [error, setError] = useState('');
-  const [msg, setMsg] = useState('');
-  const [stubMode, setStubMode] = useState(false);
-
-  useEffect(() => {
-    api(`/stores/by-slug/${slug}`).then(setStore).catch((e) => setError(e.message));
-    api<StoreProduct[]>(`/storefront/${slug}/products`).then(setProducts).catch(() => setProducts([]));
-  }, [slug]);
-
-  const cartCount = useMemo(
-    () => Object.values(cart).reduce((a, b) => a + b, 0),
-    [cart],
-  );
-
-  function add(id: string) {
-    setCart((c) => ({ ...c, [id]: (c[id] ?? 0) + 1 }));
-  }
-
-  async function checkout(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const fd = new FormData(e.currentTarget);
-    const lines = Object.entries(cart).map(([storeProductId, quantity]) => ({
-      storeProductId,
-      quantity,
-    }));
-    try {
-      const res = await api<any>('/checkout', {
-        method: 'POST',
-        body: JSON.stringify({
-          storeSlug: slug,
-          email: fd.get('email'),
-          name: fd.get('name'),
-          lines,
-          shippingAddress: {
-            line1: fd.get('line1'),
-            city: fd.get('city'),
-            state: fd.get('state'),
-            postalCode: fd.get('postalCode'),
-            country: 'US',
-          },
-        }),
-      });
-      setMsg(res.message ?? 'Order placed');
-      setStubMode(res.mode === 'stub');
-      if (res.mode === 'stub' && res.checkoutUrl) {
-        // Prefer thank-you URL from stub payment link (includes stub_paid=1)
-        window.location.href = res.checkoutUrl;
-        return;
-      }
-      if (res.checkoutUrl) {
-        window.location.href = res.checkoutUrl;
-      } else {
-        setCheckoutOpen(false);
-        setCart({});
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Checkout failed');
-    }
-  }
+export default function StoreHome() {
+  const slug = String(useParams().slug);
+  const { store, products, error } = useStore(slug);
+  const { add } = useCart(slug);
 
   if (error && !store) {
     return (
-      <div className="wrap">
-        <h1>Store not found</h1>
-        <p className="muted">{error}</p>
-      </div>
+      <div className="wrap band"><p className="sf-eyebrow">404</p><h1>This shop isn&apos;t open</h1><p className="sf-muted">Check the address, or the shop may have closed.</p></div>
     );
   }
+  const list = products ?? [];
+  const hero = list[0];
+  const fastest = list.length ? Math.min(...list.map((p) => p.product.etaDaysMin)) : null;
 
   return (
-    <div className="wrap">
-      <div className="hero">
-        <h1>{store?.name ?? slug}</h1>
-        <p className="muted">Powered by StoreForge · Honest supplier ETAs · Secure checkout</p>
-      </div>
-
-      {products.length === 0 && (
-        <p className="muted">No products yet — import from admin catalog.</p>
-      )}
-
-      <div className="grid">
-        {products.map((p) => (
-          <div className="product" key={p.id}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={p.product.imageUrl ?? ''} alt="" />
-            <div className="body">
-              <h3>{p.title ?? p.product.title}</h3>
-              <div className="eta">
-                Ships in {p.product.etaDaysMin}–{p.product.etaDaysMax} days · {p.product.sourcingLabel}
-              </div>
-              <div className="price">${(p.priceCents / 100).toFixed(2)}</div>
-              <button className="btn" onClick={() => add(p.id)}>Add to cart</button>
+    <ShopFrame slug={slug} store={store} products={products}>
+      <section className="band band--ink">
+        <div className="wrap hero">
+          <div>
+            <p className="sf-eyebrow"><Icon name="spark" size={16} />New on the shelf</p>
+            <h1>{store?.name ?? slug}</h1>
+            <p className="hero__lede">Small-batch finds, picked by hand. Every item tells you how long it really takes to reach you, before you pay.</p>
+            <div className="sf-row">
+              <a className="sf-btn sf-btn--money" href="#shelf">Shop the shelf<Icon name="next" size={18} /></a>
+              <a className="sf-btn sf-btn--quiet" href="#shipping">How shipping works</a>
+            </div>
+            <div className="hero__facts">
+              <span><Icon name="eta" size={18} />{fastest ? `Arrives in as little as ${fastest} days` : 'Real delivery times'}</span>
+              <span><Icon name="secure" size={18} />Secure card checkout</span>
             </div>
           </div>
-        ))}
-      </div>
-
-      {cartCount > 0 && (
-        <button className="cart" onClick={() => setCheckoutOpen(true)}>
-          Cart ({cartCount}) — Checkout
-        </button>
-      )}
-
-      {checkoutOpen && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
-        }}>
-          <form
-            onSubmit={checkout}
-            style={{ background: '#fff', padding: 24, borderRadius: 12, width: 'min(420px, 100%)' }}
-          >
-            <h2 style={{ fontFamily: 'system-ui' }}>Checkout</h2>
-            <label className="muted">Name</label>
-            <input name="name" required defaultValue="Test Customer" />
-            <label className="muted">Email</label>
-            <input name="email" type="email" required defaultValue="customer@example.com" />
-            <label className="muted">Address</label>
-            <input name="line1" required defaultValue="123 Main St" />
-            <label className="muted">City</label>
-            <input name="city" required defaultValue="Austin" />
-            <label className="muted">State</label>
-            <input name="state" required defaultValue="TX" />
-            <label className="muted">Postal</label>
-            <input name="postalCode" required defaultValue="78701" />
-            <button className="btn" type="submit">Continue to payment</button>
-            <button type="button" className="btn" style={{ marginLeft: 8, background: '#666' }} onClick={() => setCheckoutOpen(false)}>
-              Cancel
-            </button>
-          </form>
+          <div className="hero__art">
+            <Collage />
+            {hero && <div className="hero__photo"><ProductImage src={hero.product.imageUrl} alt={titleOf(hero)} eager /></div>}
+          </div>
         </div>
-      )}
+      </section>
 
-      {stubMode && (
-        <p className="stub-badge" role="status" style={{ marginTop: 16 }}>
-          STUB / SANDBOX PAYMENT — no card was charged
-        </p>
-      )}
-      {msg && <p className="muted" style={{ marginTop: 16 }}>{msg}</p>}
-    </div>
+      <section className="band" id="shelf">
+        <div className="wrap">
+          <div className="shelfhead">
+            <div><p className="sf-eyebrow">The shelf</p><h2>Everything in the shop</h2></div>
+            <span className="sf-muted"><span className="sf-num">{list.length}</span> items · prices include everything but shipping</span>
+          </div>
+          {products === null ? <p className="sf-muted">Loading…</p> : list.length === 0 ? (
+            <p className="sf-muted">Nothing on the shelf yet — check back soon.</p>
+          ) : (
+            <div className="editorial">
+              {list.map((p, i) => <Tile key={p.id} p={p} slug={slug} feature={i === 0} onAdd={() => add(p.id)} />)}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="band band--ink" id="shipping">
+        <div className="wrap">
+          <p className="sf-eyebrow">Shipping, plainly</p>
+          <h2 style={{ fontSize: 'clamp(1.8rem, 1.3rem + 1.6vw, 2.6rem)', marginBottom: 28 }}>No surprises after you pay</h2>
+          <div className="how">
+            <div><div className="how__n">01</div><h3>Made to order</h3><p>Most items ship from our supplier&apos;s warehouse, so each product shows its own delivery window.</p></div>
+            <div><div className="how__n">02</div><h3>One shipping fee</h3><p>Free over <Money cents={5000} />. Otherwise a flat <Money cents={499} />, shown before you pay.</p></div>
+            <div><div className="how__n">03</div><h3>Tracking by email</h3><p>You get a tracking number as soon as your order leaves the warehouse.</p></div>
+          </div>
+        </div>
+      </section>
+    </ShopFrame>
+  );
+}
+
+function Tile({ p, slug, feature, onAdd }: { p: StoreProduct; slug: string; feature: boolean; onAdd: () => void }) {
+  return (
+    <article className={`tile ${feature ? 'tile--feature' : ''}`}>
+      <Link href={`/s/${slug}/p/${p.id}`} className="tile__img">
+        <ProductImage src={p.product.imageUrl} alt={titleOf(p)} eager={feature} />
+        {p.product.etaDaysMax <= 10 && <span className="tile__tag"><Badge tone="money">Arrives fast</Badge></span>}
+      </Link>
+      <Link href={`/s/${slug}/p/${p.id}`} style={{ color: 'inherit', textDecoration: 'none' }}><h3>{titleOf(p)}</h3></Link>
+      <div className="tile__meta">
+        <span className="tile__price"><Money cents={p.priceCents} /></span>
+        <button className="sf-btn sf-btn--sm" onClick={onAdd} aria-label={`Add ${titleOf(p)} to bag`}><Icon name="add" size={16} />Add</button>
+      </div>
+      <span className="tile__eta"><Icon name="eta" size={14} />Arrives in {p.product.etaDaysMin}–{p.product.etaDaysMax} days</span>
+    </article>
   );
 }

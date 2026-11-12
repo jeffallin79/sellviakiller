@@ -1,0 +1,112 @@
+/*
+ * StoreForge — "Garnet & Saffron" design tokens (Phase 1 slice 1).
+ * Source of truth for colour. Apps must not use raw colour values; `pnpm lint` enforces it.
+ *
+ * Values are RGB channel triplets so they work with alpha:
+ *   color: rgb(var(--sf-ink));   background: rgb(var(--sf-brand) / 0.12);
+ * Tailwind: see tailwind.preset.ts (`rgb(var(--sf-brand) / <alpha-value>)`).
+ *
+ * Two layers:
+ *  1. Blueprint tokens (§6 table) — fixed values, same in both themes.
+ *  2. Role tokens (--sf-canvas, --sf-ink, --sf-brand …) — what apps use; they switch with
+ *     [data-theme="dark"]. Every text/background role pair is AA-checked in test/contrast.test.ts.
+ */
+:root {
+  /* ---- 1. Palette / blueprint tokens ---- */
+  --sf-primary: 163 21 63;          /* garnet-600  #A3153F */
+  --sf-primary-dark: 240 106 142;   /* garnet-400  #F06A8E */
+  --sf-accent: 245 179 46;          /* saffron-400 #F5B32E */
+  --sf-accent-ink: 138 90 0;        /* saffron-700 #8A5A00 */
+  --sf-secondary: 31 95 102;        /* lagoon-700  #1F5F66 */
+  --sf-secondary-dark: 127 196 200; /* lagoon-300  #7FC4C8 */
+  --sf-bg: 251 246 240;             /* paper-50    #FBF6F0 */
+  --sf-border: 232 220 205;         /* sand-200    #E8DCCD */
+  --sf-text: 43 30 39;              /* ink-700     #2B1E27 */
+  --sf-bg-dark: 28 18 25;           /* ink-900     #1C1219 */
+  --sf-surface-dark: 42 29 38;      /* ink-800     #2A1D26 */
+  --sf-text-dark: 243 233 238;      /* mist-100    #F3E9EE */
+  --sf-success: 46 125 79;          /* #2E7D4F */
+  --sf-warning: 150 90 0;           /* #965A00 */
+  --sf-danger: 179 38 30;           /* #B3261E */
+  --sf-info: 53 89 168;             /* #3559A8 (semantic only, never a brand hue) */
+  --sf-white: 255 255 255;
+
+  /* ---- 2. Role tokens: light ---- */
+  color-scheme: light;
+  --sf-canvas: var(--sf-bg);
+  --sf-surface: var(--sf-white);
+  --sf-surface-2: 244 236 226;      /* paper-100 #F4ECE2 (sunken panels) */
+  --sf-ink: var(--sf-text);
+  --sf-muted: 107 90 100;           /* ink-500 #6B5A64 — 5.97:1 on paper */
+  --sf-line: var(--sf-border);      /* decorative dividers */
+  --sf-control: 156 138 119;        /* sand-500 #9C8A77 — 2px input outlines, ≥3:1 (WCAG 1.4.11) */
+  --sf-brand: var(--sf-primary);
+  --sf-on-brand: var(--sf-white);
+  --sf-money: var(--sf-accent);     /* saffron = the money signal */
+  --sf-on-money: var(--sf-bg-dark);
+  --sf-money-ink: var(--sf-accent-ink);
+  --sf-alt: var(--sf-secondary);
+  --sf-on-alt: var(--sf-white);
+  --sf-alt-ink: var(--sf-secondary);
+  --sf-band: var(--sf-bg-dark);     /* ink band (storefront/marketing 50/50 rule) */
+  --sf-on-band: var(--sf-text-dark);
+  --sf-band-muted: 191 174 184;     /* #BFAEB8 */
+  --sf-band-brand: var(--sf-primary-dark);
+  --sf-rail: var(--sf-bg-dark);     /* admin ink rail */
+  --sf-on-rail: var(--sf-text-dark);
+  --sf-rail-muted: 191 174 184;
+  --sf-rail-active: var(--sf-surface-dark);
+  --sf-focus: var(--sf-primary);
+  --sf-ok-ink: var(--sf-success);
+  --sf-warn-ink: var(--sf-warning);
+  --sf-bad-ink: var(--sf-danger);
+  --sf-info-ink: var(--sf-info);
+  --sf-chart-rest: var(--sf-border);
+  --sf-chart-hot: var(--sf-primary);
+  --sf-scrim: 28 18 25;
+
+  /* ---- shape, type, motion ---- */
+  --sf-radius-sm: 10px;
+  --sf-radius: 14px;
+  --sf-radius-lg: 18px;
+  --sf-radius-pill: 999px;
+  --sf-stroke: 2px;
+  --sf-font-display: 'Bricolage Grotesque Variable', 'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif;
+  --sf-font-ui: 'Instrument Sans Variable', 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+  --sf-font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sf-shadow: 0 1px 0 rgb(var(--sf-line)), 0 8px 24px -12px rgb(var(--sf-scrim) / 0.25);
+  --sf-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+  --sf-canvas: var(--sf-bg-dark);
+  --sf-surface: var(--sf-surface-dark);
+  --sf-surface-2: 35 24 32;         /* ink-850 #231820 */
+  --sf-ink: var(--sf-text-dark);
+  --sf-muted: 191 174 184;          /* #BFAEB8 — 7.65:1 on ink-800 */
+  --sf-line: 62 46 57;              /* ink-600 #3E2E39 */
+  --sf-control: 125 102 118;        /* #7D6676 — ≥3:1 on ink-800 */
+  --sf-brand: var(--sf-primary-dark);
+  --sf-on-brand: var(--sf-bg-dark);
+  --sf-money: var(--sf-accent);
+  --sf-on-money: var(--sf-bg-dark);
+  --sf-money-ink: var(--sf-accent);
+  --sf-alt: var(--sf-secondary-dark);
+  --sf-on-alt: var(--sf-bg-dark);
+  --sf-alt-ink: var(--sf-secondary-dark);
+  --sf-band: var(--sf-surface-dark);
+  --sf-on-band: var(--sf-text-dark);
+  --sf-band-brand: var(--sf-primary-dark);
+  --sf-rail: 20 12 18;              /* ink-950 #140C12 */
+  --sf-rail-active: var(--sf-surface-dark);
+  --sf-focus: var(--sf-accent);
+  --sf-ok-ink: 155 216 176;         /* #9BD8B0 */
+  --sf-warn-ink: 247 200 115;       /* #F7C873 */
+  --sf-bad-ink: 242 184 181;        /* #F2B8B5 */
+  --sf-info-ink: 169 193 242;       /* #A9C1F2 */
+  --sf-chart-rest: 74 56 68;        /* #4A3844 */
+  --sf-chart-hot: var(--sf-primary-dark);
+  --sf-scrim: 0 0 0;
+  --sf-shadow: 0 0 0 1px rgb(var(--sf-line)), 0 10px 30px -14px rgb(0 0 0 / 0.6);
+}

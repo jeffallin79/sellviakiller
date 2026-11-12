@@ -1,30 +1,22 @@
 import type { Metadata } from 'next';
+import '@storeforge/ui/fonts';
+import '@storeforge/ui/tokens.css';
+import '@storeforge/ui/base.css';
 import './globals.css';
+import { ThemeScript } from '@storeforge/ui/theme-script';
 
 export const metadata: Metadata = {
-  title: 'StoreForge Admin',
-  description: 'Merchant dashboard — Phase 0 MVP',
+  title: { default: 'StoreForge', template: '%s · StoreForge' },
+  description: 'Run your store: Launchpad, Shelf, Dispatch, Boost.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body>
-        <header className="topbar">
-          <a href="/dashboard" className="brand">
-            StoreForge
-          </a>
-          <nav>
-            <a href="/dashboard">Home</a>
-            <a href="/dashboard/stores">Stores</a>
-            <a href="/dashboard/catalog">Catalog</a>
-            <a href="/dashboard/orders">Orders</a>
-            <a href="/dashboard/billing">Billing</a>
-            <a href="/login">Sign in</a>
-          </nav>
-        </header>
-        <main className="container">{children}</main>
-      </body>
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <ThemeScript />
+      </head>
+      <body>{children}</body>
     </html>
   );
 }

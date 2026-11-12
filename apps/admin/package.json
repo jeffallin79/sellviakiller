@@ -6,14 +6,15 @@
     "dev": "next dev -p 3001",
     "build": "next build",
     "start": "next start -p 3001",
-    "lint": "echo ok",
+    "lint": "eslint --config ../../eslint.config.mjs src && node ../../packages/ui/scripts/check-colors.mjs src",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@storeforge/shared": "workspace:*",
     "next": "^15.1.3",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "@storeforge/ui": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

@@ -141,3 +141,11 @@ Live keys (`sk_live_`) are refused unless `STRIPE_ALLOW_LIVE=true`.
 **Existing dev DB created with `db push` (Phase 0)?** Mark the baseline as applied, then deploy:
 `cd packages/db && npx prisma migrate resolve --applied 20260918000000_phase0_baseline && npx prisma migrate deploy`.
 The second migration renames the Square columns (data kept, rows tagged `provider='square'`).
+
+## Phase 1 · Slice 1 — design system & reskin
+
+- `packages/ui` (`@storeforge/ui`): Garnet & Saffron tokens (`tokens.css`, RGB-channel CSS variables; role tokens switch under `[data-theme='dark']`), `base.css` primitives, self-hosted OFL fonts via Fontsource, Phosphor duotone icons (`icons.tsx`), `ThemeToggle` + `ThemeScript` (localStorage `sf-theme`), `ProductImage` with branded fallback, Tailwind preset for future use.
+- AA contrast is tested: `pnpm --filter @storeforge/ui test` (pairs from `brand/contrast.txt` plus every text/UI pair in both themes).
+- No hard-coded colours outside `tokens.css`: root `eslint.config.mjs` (TS/TSX) and `packages/ui/scripts/check-colors.mjs` (CSS) run in each app's `pnpm lint`.
+- Admin routes: `/launchpad`, `/shelf`, `/dispatch`, `/boost` (placeholder until ad platforms approve), `/fuel` (Ad Fuel), `/stores`, `/billing`; old `/dashboard/*` URLs redirect.
+- Storefront: `/s/[slug]` (shop), `/s/[slug]/p/[id]` (product), cart drawer + checkout, `/checkout/complete`.
