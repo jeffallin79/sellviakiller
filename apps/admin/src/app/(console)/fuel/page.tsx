@@ -13,6 +13,7 @@ const PRESETS = [2500, 5000, 10000, 25000];
 const rid = () => (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`).replace(/-/g, '');
 const day = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 const dollars = (cents: number) => String(Math.round(cents) / 100);
+const cleanName = (n: string) => n.replace(/\s*\[sf:[^\]]+\]\s*$/, '');
 const toCents = (s: string) => Math.round(Number(s.replace(/[$,\s]/g, '')) * 100);
 
 type Overview = {
@@ -205,7 +206,7 @@ function FuelInner() {
                           <td className="sf-mono sf-muted" data-label="Date">{day(t.createdAt)}</td>
                           <td data-label="What">
                             {KIND[t.kind] ?? t.kind}{t.source === 'auto' ? ' · auto-reload' : ''}
-                            {t.campaignName && <div className="sf-hint">{t.campaignName}{t.day ? ` · ${day(t.day)}` : ''}</div>}
+                            {t.campaignName && <div className="sf-hint">{cleanName(t.campaignName)}{t.day ? ` · ${day(t.day)}` : ''}</div>}
                             {t.bonusCents < 0 && <div className="sf-hint">{money(-t.bonusCents)} from bonus fuel</div>}
                             {t.note && <div className="sf-hint">{t.note}</div>}
                           </td>
@@ -240,7 +241,7 @@ function FuelInner() {
               </section>
             )}
           </div>
-          <div className="sf-stack">
+          <div className="sf-stack fuel-actions">
             <TopUp o={o} onDone={done} />
             <AutoReload o={o} onSaved={(next, msg) => { setO(next); setFlash(msg); }} />
           </div>

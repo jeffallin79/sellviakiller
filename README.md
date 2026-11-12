@@ -196,6 +196,59 @@ The second migration renames the Phase 0 payment columns to provider-neutral one
 - Email subjects (and To/Reply-To at send time) are stripped of CR/LF and control characters. DB CHECK `Order_refunded_within_paid`: `0 <= refundedCents <= totalCents`.
 - Seed images are bundled SVGs (`apps/*/public/catalog`, `scripts/gen-catalog-art.py`); no third-party image host. Existing picsum rows are rewritten by `pnpm db:seed`.
 
+## Phase 1 · Slice 3 — Ad Fuel wallet + Boost (Meta, connect your own) + Conversions API
+
+**Ad Fuel** (admin → Ad Fuel; API `/api/fuel/*`). One wallet per organization (all stores share it).
+- Top-up through Stripe Checkout (`POST /fuel/checkout`, card saved for auto-reload); credited by the
+  `payment_intent.succeeded` webhook. Stub mode credits at once. The same `requestId` → the same
+  PaymentIntent → credited once.
+- Ledger: every row stores `balanceAfterCents`/`bonusAfterCents`. All money moves run under a row lock
+  (`SELECT … FOR UPDATE`) and DB CHECKs keep balances ≥ 0.
+- Spend/fee debits: one `AdChargeDay` per campaign per day. Re-syncs charge only the difference; a downward
+  revision is credited back. Bonus fuel is spent first. When fuel can't cover a charge, the gap is recorded
+  as a shortfall, the campaigns pause (`low_fuel`) and the merchant is notified. The next top-up settles it
+  and resumes them.
+- Auto-reload: single-flight claim per wallet, Stripe idempotency key `sf-autoreload-<wallet>-<seq>`,
+  at most `ADS_AUTORELOAD_MAX_PER_DAY` per day. Three declines (or one `requires_action`) switch it off
+  with an email. An unknown outcome is retried by the reconciler with the same key.
+- Refunds: per top-up, within 90 days, never bonus fuel (existing `/fuel/refunds`).
+
+**Boost** (admin → Boost; API `/api/boost/*`). Merchant connects their own Meta ad account:
+1. *Continue with Facebook* → Facebook Login for Business (stub: `/boost/connect/stub`). The OAuth `state` is single-use and lasts 10 minutes.
+2. Long-lived user token, AES-256-GCM encrypted (`ADS_TOKEN_KEY`), scopes checked.
+3. Pick the ad account, Page and Pixel (+ optional Test Events code).
+4. *Launch on Meta*: campaign → ad set → creative → ad, all created PAUSED, then activated. The launch is
+   resumable and single-flight; a timed-out create is found again by its `[sf:<id>]` name tag, so
+   there are no duplicate campaigns.
+5. Hourly sync (`ADS_SYNC_MS`): insights → `AdInsightDaily` → fuel charges. Stages: Meta review → Warming up →
+   Steady (≥50 purchases in 7 days) / Rejected. Expired tokens mark the connection and ask the merchant to reconnect.
+
+Fees: on their own account Meta bills the merchant for spend; fuel only pays `ADS_OWNED_FEE_PCT` (default
+0, per the blueprint's "0% or small flat fee"). Platform-managed ads (slice 4) pay spend + `ADS_FEE_PCT` (15).
+
+**Conversions API**: when an order is paid, a server `Purchase` goes to the store's Pixel with
+`event_id = order_<orderId>`. Email, name, city, state, zip, country and external_id are SHA-256 hashed (no phone is collected)
+per Meta's rules; fbp, fbc, IP and UA are sent raw. The storefront banner asks for marketing-cookie consent:
+without consent there is no Pixel, no _fbp/_fbc and no CAPI event (recorded as `skipped`). The thank-you page fires the browser
+`Purchase` with the same event id, so Meta deduplicates. Retries back off (max 8 attempts, 7-day window).
+The shopper IP comes from the storefront's trusted-proxy chain (`x-sf-client-ip`), never a client-sent XFF.
+
+Stub Meta (no `META_APP_ID`/`META_APP_SECRET`, or `META_MODE=stub`): a stateful stand-in for the Graph API.
+It covers OAuth, accounts, Pages, Pixels, objects, review/disapproval, time-based insights, CAPI and a Test Events view
+(admin → Boost → Purchase tracking). Dev state lives in `apps/api/.stub-meta.json` (gitignored).
+
+Go-live checklist (Meta):
+- Business Manager with **business verification**.
+- A **Business-type app** with Facebook Login for Business (configuration → `META_LOGIN_CONFIG_ID`) and Marketing API.
+- **App Review, Advanced Access** for `ads_management`, `ads_read`, `business_management`, `pages_show_list`,
+  `pages_read_engagement`. Needs a screencast of this flow, a privacy policy URL and a data-deletion callback/URL.
+- Valid OAuth redirect URI: `{API_PUBLIC_URL}/api/boost/meta/callback`. App Domains include the admin domain.
+- Env: `META_APP_ID`, `META_APP_SECRET`, `META_LOGIN_CONFIG_ID`, `META_GRAPH_VERSION` (v23.0), `ADS_TOKEN_KEY`
+  (`openssl rand -base64 32`), `API_PUBLIC_URL`, `ADMIN_URL`. Stripe live keys are needed for real top-ups.
+  `META_BUSINESS_ID`/`META_SYSTEM_USER_TOKEN`/`META_CAPI_TOKEN` are for managed mode (slice 4).
+- Test: set a Test Events code on the store, place an order, and check Events Manager → Test events: server
+  and browser Purchase, deduplicated.
+
 ## Dependency audit (`pnpm audit --prod`)
 
 QA round 1 found 42 (21 high, 2 critical). Fixed by upgrades: `next` ^15.5.29 (Image Optimizer RCE; admin + storefront, and the Image Optimization API is disabled with `images.unoptimized` and no `remotePatterns`), `better-auth` ^1.7.22, `zod` ^4.6.6. Transitive fixes are version-scoped `pnpm.overrides` in the root `package.json` (each only rewrites versions below the patched one): `sharp` ≥0.35.5, `multer` ≥2.1.0, `body-parser` ≥1.20.6, `qs` ≥6.15.2, `js-yaml` 4.x ≥4.1.1, `lodash` ≥4.18.0, `postcss` ≥8.5.10, `source-map-js` ≥1.2.2, `deepmerge-ts` ≥8, `file-type` ≥21.3.1, `zod` 4.x ≥4.6.6.
