@@ -12,3 +12,4 @@ packages/db/prisma/*.db-journal
 data/
 .local-bin/
 .env
+*.tsbuildinfo
