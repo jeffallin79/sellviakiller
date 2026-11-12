@@ -41,6 +41,9 @@ export default function BillingPage() {
   }
 
   if (authError) return <SignInNeeded error={authError} />;
+  // From PLATFORM_FEE_BPS via GET /billing/plans — never hard-coded.
+  const feeBps: number = plans?.platformFeeBps ?? 0;
+  const feePct = (feeBps / 100).toLocaleString('en-US', { maximumFractionDigits: 2 });
 
   return (
     <>
@@ -48,7 +51,7 @@ export default function BillingPage() {
         eyebrow="Billing"
         icon="billing"
         title="Your plan"
-        lede="One monthly price. No weekly tiers, no commission on your orders. Cancel any time from the billing portal."
+        lede={`One monthly price. No weekly tiers${feeBps ? `, plus a ${feePct}% StoreForge fee on each order` : ', no commission on your orders'}. Cancel any time from the billing portal.`}
         actions={<>
           {plans && <Badge tone={plans.mode === 'live' ? 'ok' : 'warn'}>{MODE[plans.mode] ?? plans.mode}</Badge>}
           <button className="sf-btn sf-btn--quiet" onClick={portal}><Icon name="billing" size={18} />Manage billing</button>
@@ -67,7 +70,7 @@ export default function BillingPage() {
               <ul>
                 <li><Icon name="done" size={18} />{p.maxStores} store{p.maxStores === 1 ? '' : 's'}</li>
                 <li><Icon name="done" size={18} />Up to <span className="sf-num">{p.maxOrdersPerMonth.toLocaleString()}</span> orders a month</li>
-                <li><Icon name="done" size={18} />0% StoreForge fee on orders</li>
+                <li><Icon name={feeBps ? 'info' : 'done'} size={18} />{feeBps ? <><span className="sf-num">{feePct}%</span>&nbsp;StoreForge fee on each order</> : 'No StoreForge fee on orders'}</li>
                 <li><Icon name="info" size={18} />Stripe card fees apply to each sale</li>
               </ul>
               <button className={`sf-btn ${current ? 'sf-btn--quiet' : 'sf-btn--brand'}`} onClick={() => subscribe(p.id)} disabled={current}>

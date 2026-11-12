@@ -127,8 +127,11 @@ export function planForPriceId(priceId: string | null): string | null {
   return null;
 }
 
-/** Platform fee on storefront orders, basis points. Default 0 (plans carry the revenue). */
+/** Platform fee on storefront orders, basis points (PLATFORM_FEE_BPS, clamped 0–2000). Default 0. */
+export function platformFeeBps(): number {
+  return Math.max(0, Math.min(2000, Math.round(Number(process.env.PLATFORM_FEE_BPS ?? 0) || 0)));
+}
+
 export function platformFeeCents(totalCents: number): number {
-  const bps = Math.max(0, Math.min(2000, Number(process.env.PLATFORM_FEE_BPS ?? 0) || 0));
-  return Math.round((totalCents * bps) / 10000);
+  return Math.round((totalCents * platformFeeBps()) / 10000);
 }

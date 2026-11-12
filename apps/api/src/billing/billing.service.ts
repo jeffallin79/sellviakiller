@@ -3,7 +3,7 @@ import { prisma } from '@storeforge/db';
 import { PLANS, type PlanId } from '@storeforge/shared';
 import {
   getPaymentProvider,
-  priceIdForPlan,
+  priceIdForPlan, platformFeeBps,
   planForPriceId,
   type NormalizedSubscription,
 } from '../payments';
@@ -21,6 +21,8 @@ export class BillingService {
       plans: plans.map((p) => ({ ...p, priceConfigured: Boolean(priceIdForPlan(p.id, p.providerPriceId)) })),
       mode: provider.mode(),
       paymentsProvider: provider.kind,
+      /** What the billing page shows as the StoreForge fee on storefront orders */
+      platformFeeBps: platformFeeBps(),
     };
   }
 
