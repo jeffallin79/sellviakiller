@@ -256,6 +256,8 @@ export type CartEmailContext = {
 export function renderCartEmail(step: 1 | 2, c: CartEmailContext): Rendered {
   const p = emailPalette();
   const s = c.store.name;
+  /** Postal address line; skip the shop name when the merchant already started the address with it. */
+  const postal = c.store.mailingAddress.toLowerCase().startsWith(s.toLowerCase()) ? c.store.mailingAddress : `${s} · ${c.store.mailingAddress}`;
   const first = (c.cart.customerName ?? '').trim().split(/\s+/)[0] || '';
   const cur = c.cart.currency;
   const count = c.cart.lines.reduce((a, l) => a + l.quantity, 0);
@@ -314,7 +316,7 @@ export function renderCartEmail(step: 1 | 2, c: CartEmailContext): Rendered {
   </td></tr>
   <tr><td style="padding:18px 28px 0;font:400 13px/1.6 ${FONT_UI};color:${p.muted}">
     ${esc(why)} <a href="${esc(c.unsubscribeUrl)}" style="color:${p.ink};font-weight:600">Unsubscribe</a> and ${esc(s)} won't email you reminders again.<br>
-    ${esc(s)} · ${esc(c.store.mailingAddress)}<br>
+    ${esc(postal)}<br>
     Shop built on StoreForge.
   </td></tr>
 </table>
@@ -337,7 +339,7 @@ export function renderCartEmail(step: 1 | 2, c: CartEmailContext): Rendered {
     '',
     why,
     `Unsubscribe: ${c.unsubscribeUrl}`,
-    `${s} · ${c.store.mailingAddress}`,
+    postal,
   ].join('\n');
   return { subject: k.subject, html, text, preheader: k.preheader };
 }

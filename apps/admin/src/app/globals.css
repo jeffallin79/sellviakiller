@@ -237,7 +237,7 @@
 }
 
 /* ---------- Slice 5: Research ---------- */
-.research { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.research { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(360px, 1fr); gap: 18px; align-items: start; }
 .research__side { display: grid; gap: 16px; position: sticky; top: 16px; }
 .research__table tbody tr { cursor: pointer; }
 .research__table tbody tr.is-sel { background: rgb(var(--sf-brand) / 0.08); box-shadow: inset 4px 0 0 rgb(var(--sf-brand)); }
@@ -273,7 +273,11 @@
 .calc__big { font-size: 1.9rem; letter-spacing: -0.03em; }
 .calc__big.is-neg, .is-neg { color: rgb(var(--sf-bad-ink)); }
 .calc__be { display: grid; gap: 2px; margin-top: 6px; font-size: 0.85rem; }
-@media (max-width: 1100px) { .research { grid-template-columns: 1fr; } .research__side { position: static; } }
+@media (max-width: 1280px) { .research { grid-template-columns: 1fr; } .research__side { position: static; } }
+.research__table .research__pick { min-width: 170px; }
+.research__table th, .research__table td { padding-left: 10px; padding-right: 10px; }
+.research__table td { white-space: nowrap; }
+.research__table td:first-child { white-space: normal; }
 @media (max-width: 640px) { .calc__in { grid-template-columns: 1fr 1fr; } .calc__out { grid-template-columns: 1fr; } }
 
 /* ---------- Slice 5: Recovery ---------- */

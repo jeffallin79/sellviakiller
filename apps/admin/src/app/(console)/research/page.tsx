@@ -22,7 +22,7 @@ const satLabel = (s: number) => (s >= 67 ? { t: 'Crowded', tone: 'bad' as const 
 
 function Spark({ v, label }: { v: number[]; label: string }) {
   if (v.length < 2) return <span className="sf-muted">no data</span>;
-  const w = 96, h = 28, max = Math.max(...v, 1);
+  const w = 72, h = 26, max = Math.max(...v, 1);
   const pts = v.map((y, i) => `${((i / (v.length - 1)) * w).toFixed(1)},${(h - 2 - (y / max) * (h - 4)).toFixed(1)}`).join(' ');
   return <svg className="spark" width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label={label}><polyline points={pts} fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" /></svg>;
 }

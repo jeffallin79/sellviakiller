@@ -31,8 +31,8 @@ function Step({ c, n }: { c: Cart; n: 1 | 2 }) {
     return <Badge tone={m.status === 'FAILED' ? 'warn' : 'info'}>{m.status === 'FAILED' ? 'Failed' : 'Queued'}</Badge>;
   }
   if (at) return <span className="sf-muted" title="This address already got reminders this week">Skipped (weekly limit)</span>;
-  if (c.status !== 'OPEN' || !c.consent) return <span className="sf-muted">–</span>;
-  return <span className="sf-muted">Due</span>;
+  if (c.status !== 'OPEN' || !c.consent || (n === 2 && !c.reminder1At)) return <span className="sf-muted">–</span>;
+  return <span className="sf-muted">Scheduled</span>;
 }
 
 export default function RecoveryPage() {

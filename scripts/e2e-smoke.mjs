@@ -274,7 +274,7 @@ ok(ref.status < 300 && ref.json.status === 'succeeded', 'ad fuel refund $5 (stub
   const { execFileSync } = await import('node:child_process');
   let aged = false;
   try {
-    execFileSync('psql', [process.env.E2E_DATABASE_URL ?? 'postgresql://storeforge@127.0.0.1:5432/storeforge', '-qc', `UPDATE "Cart" SET "lastActivityAt" = now() - interval '2 hours' WHERE id = '${cap.json.id.replace(/[^a-z0-9]/gi, '')}'`], { stdio: 'pipe' });
+    execFileSync('psql', [process.env.E2E_DATABASE_URL ?? 'postgresql://storeforge@127.0.0.1:5432/storeforge', '-qc', `UPDATE "Cart" SET "lastActivityAt" = (now() AT TIME ZONE 'UTC') - interval '2 hours' WHERE id = '${cap.json.id.replace(/[^a-z0-9]/gi, '')}'`], { stdio: 'pipe' });
     aged = true;
   } catch { console.log('skip - psql unavailable, reminder delivery not checked'); }
   if (aged) {
