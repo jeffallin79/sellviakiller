@@ -521,6 +521,9 @@ model Domain {
   isPrimary         Boolean      @default(false)
   /// DNS ownership + routing verified
   verifiedAt        DateTime?
+  /// The edge IP DNS verification matched (ours). The HTTPS probe is pinned to it, so a DNS change
+  /// after verification can't point our probe somewhere else (SSRF / DNS rebinding).
+  verifiedIp        String?
   tlsRequestedAt    DateTime?
   tlsIssuedAt       DateTime?
   tlsProvider       String       @default("stub") // stub | caddy | vercel
@@ -545,17 +548,19 @@ model Domain {
 
 /// Storefront order refund (Stripe Refund on the destination charge, reverse_transfer).
 model OrderRefund {
-  id               String   @id @default(cuid())
+  id               String    @id @default(cuid())
   orderId          String
   amountCents      Int
   reason           String?
   /// Merchant-supplied request id; makes the POST idempotent
   requestId        String
-  provider         String   @default("stub")
-  providerRefundId String?  @unique
-  status           String   @default("pending") // pending | succeeded | failed | canceled
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  provider         String    @default("stub")
+  providerRefundId String?   @unique
+  status           String    @default("pending") // pending | unknown | succeeded | failed | canceled
+  /// Last time the reconciler asked the provider about a pending/unknown refund
+  reconciledAt     DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
@@ -583,6 +588,8 @@ model EmailMessage {
   attempts          Int         @default(0)
   lastError         String?
   sentAt            DateTime?
+  /// Send lease: whoever holds it delivers (inline send, worker and outbox sweeper never double-send)
+  lockedUntil       DateTime?
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
 
