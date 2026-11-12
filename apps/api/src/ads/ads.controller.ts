@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Query, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, NotFoundException, Param, Post, Query, Res, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { z } from 'zod';
@@ -219,7 +219,7 @@ export class ManagedBoostController {
   async group(@CurrentUser() u: U, @Param('id') id: string) {
     const org = await this.org(u);
     const g = await prisma.boostGroup.findFirst({ where: { id, store: { organizationId: org } }, select: { id: true } });
-    if (!g) return { message: 'Not found' };
+    if (!g) throw new NotFoundException('Boost group not found');
     return this.managed.groupView(id);
   }
   @Post('groups/:id/pause')

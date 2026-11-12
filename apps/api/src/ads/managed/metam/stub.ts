@@ -103,6 +103,10 @@ export class StubMetaGraph implements MetaGraph {
         const name = (b.filtering ?? []).find((x: any) => x.field === 'name')?.value as string | undefined;
         return { data: Object.values(this.o).filter((x: any) => x.kind === 'adset' && x.account === head && (!name || x.name.includes(name))).map((x: any) => ({ id: x.id, name: x.name })) };
       }
+      if (method === 'GET' && edge === 'adcreatives') {
+        const name = (b.filtering ?? []).find((x: any) => x.field === 'name')?.value as string | undefined;
+        return { data: Object.values(this.o).filter((x: any) => x.kind === 'creative' && x.account === head && (!name || x.name.includes(name))).map((x: any) => ({ id: x.id, name: x.name })) };
+      }
       if (method === 'POST' && edge === 'campaigns') {
         if (b.objective !== 'OUTCOME_SALES' || !Array.isArray(b.special_ad_categories)) throw bad('(#100) objective OUTCOME_SALES and special_ad_categories are required');
         const id = this.sim.nextId(120_000_000_000_000);
@@ -152,6 +156,9 @@ export class StubMetaGraph implements MetaGraph {
           this.sim.setBudget(x.id, Number(b.daily_budget));
         }
         return { success: true };
+      }
+      if (method === 'GET' && edge === 'ads' && x.kind === 'adset') {
+        return { data: Object.values(this.o).filter((a: any) => a.kind === 'ad' && a.parent === x.id).map((a: any) => ({ id: a.id, name: a.name })) };
       }
       if (method === 'GET' && edge === 'insights') {
         const tr = b.time_range ?? {};

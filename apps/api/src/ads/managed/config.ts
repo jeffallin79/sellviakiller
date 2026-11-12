@@ -6,10 +6,9 @@ const num = (v: string | undefined, d: number) => {
 };
 /** Total managed daily budget minimum across channels (cents) */
 export const managedMinDailyCents = () => num(process.env.ADS_MANAGED_MIN_DAILY_CENTS, 1000);
-/** Platform minimums per channel per day (TikTok ad group: $20/day) */
-export const CHANNEL_MIN_CENTS: Record<Channel, number> = { META: 100, GOOGLE: 100, TIKTOK: 2000 };
-/** Default share of a total budget after minimums are met */
-export const CHANNEL_WEIGHT: Record<Channel, number> = { META: 0.4, GOOGLE: 0.4, TIKTOK: 0.2 };
+/** Platform minimums, weights and the split live in @storeforge/shared (the admin preview uses the same code). */
+export { CHANNEL_MIN_CENTS, CHANNEL_WEIGHT, splitBudget } from '@storeforge/shared';
+import { CHANNEL_MIN_CENTS } from '@storeforge/shared';
 /** Blueprint budget ladder: cumulative group spend (cents) → daily budget (cents) */
 export const LADDER: { atSpendCents: number; dailyCents: number }[] = [
   { atSpendCents: 14_000, dailyCents: 1_500 },
@@ -28,20 +27,4 @@ export const CAP_LEASE_MS = 60_000;
 export const enabledChannels = (): Channel[] =>
   (process.env.ADS_MANAGED_CHANNELS ?? 'META,GOOGLE,TIKTOK').split(',').map((s) => s.trim().toUpperCase()).filter((c): c is Channel => c === 'META' || c === 'GOOGLE' || c === 'TIKTOK');
 
-/** Split a total across channels: platform minimums first, then the rest by weight (cents, sums exactly). */
-export function splitBudget(total: number, channels: Channel[]): Record<string, number> {
-  const out: Record<string, number> = {};
-  if (!channels.length) return out;
-  let rest = total;
-  for (const c of channels) { out[c] = CHANNEL_MIN_CENTS[c]; rest -= CHANNEL_MIN_CENTS[c]; }
-  if (rest < 0) return out; // caller validates the minimum
-  const w = channels.reduce((n, c) => n + CHANNEL_WEIGHT[c], 0);
-  let given = 0;
-  channels.forEach((c, i) => {
-    const add = i === channels.length - 1 ? rest - given : Math.floor((rest * CHANNEL_WEIGHT[c]) / w);
-    out[c] += add;
-    given += add;
-  });
-  return out;
-}
 export const minTotalFor = (channels: Channel[]) => Math.max(managedMinDailyCents(), channels.reduce((n, c) => n + CHANNEL_MIN_CENTS[c], 0));

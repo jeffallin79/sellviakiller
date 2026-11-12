@@ -201,7 +201,7 @@ export class GoogleChannel implements ManagedChannel {
     const at = new Date(ev.eventTime * 1000).toISOString().replace('T', ' ').slice(0, 19) + '+00:00';
     const r = await this.c.uploadConversionAdjustments(acct.externalId, [{
       conversionAction: acct.conversionActionId!, adjustmentType: 'ENHANCEMENT', orderId: ev.orderId, userIdentifiers: ids, adjustmentDateTime: at,
-      ...(ev.gclid ? { gclidDateTimePair: { gclid: ev.gclid, conversionDateTime: at } } : {}), ...(ev.ua ? { userAgent: ev.ua } : {}),
+      ...(ev.gclid ? { gclidDateTimePair: { gclid: ev.gclid, conversionDateTime: at } } : {}),
     }], { partialFailure: true });
     if (r.partialFailureError) throw new PlatformError(r.partialFailureError.message, 'GOOGLE', { status: 400 });
     return { trace: `google:${r.results[0]?.orderId ?? ev.orderId}` };
@@ -421,9 +421,21 @@ export class MetaManagedChannel implements ManagedChannel {
         bid_strategy: 'LOWEST_COST_WITHOUT_CAP', promoted_object: { pixel_id: acct.pixelId, custom_event_type: 'PURCHASE' }, targeting: { geo_locations: { countries: input.countries } }, status: 'ACTIVE',
       })).id);
     }
+    // QA r4 #1: creative and ad are looked up by their tagged name too, so a retry after a lost
+    // response (the POST committed at Meta, the reply never arrived) reuses them instead of
+    // creating a second creative/ad.
+    if (!r.creative) {
+      const name = `Creative ${input.tag}`;
+      const existing = ((await this.g.call('GET', `${act}/adcreatives`, { fields: 'id,name', filtering: [{ field: 'name', operator: 'CONTAIN', value: input.tag }], limit: 500 })).data ?? []).find((c: any) => c.name === name);
+      if (existing) await put('creative', existing.id);
+    }
     if (!r.creative) {
       const img = input.images.find((i) => i.ratio === '1.91:1') ?? input.images[0];
       await put('creative', (await this.g.call('POST', `${act}/adcreatives`, { name: `Creative ${input.tag}`, object_story_spec: { page_id: acct.pageId, link_data: { link: input.finalUrl, message: input.primaryText, name: clip(input.headlines[0] ?? input.name, 40), description: clip(input.descriptions[0] ?? '', 30), picture: img?.url, call_to_action: { type: 'SHOP_NOW' } } } })).id);
+    }
+    if (!r.ad) {
+      const existing = ((await this.g.call('GET', `${r.adset}/ads`, { fields: 'id,name', limit: 500 })).data ?? []).find((a: any) => a.name === `Ad ${input.tag}`);
+      if (existing) await put('ad', existing.id);
     }
     if (!r.ad) await put('ad', (await this.g.call('POST', `${act}/ads`, { name: `Ad ${input.tag}`, adset_id: r.adset, creative: { creative_id: r.creative }, status: 'ACTIVE' })).id);
     if (!r.enabled) { await this.g.call('POST', r.campaign, { status: 'ACTIVE' }); await put('enabled', '1'); }

@@ -436,7 +436,7 @@ export class ManagedBoostService {
     const a = await prisma.adAccount.findUniqueOrThrow({ where: { id: accountId }, include: { store: true } });
     const org = a.store.organizationId;
     const { availableCents } = await this.fuel(org);
-    const accts = await prisma.adAccount.findMany({ where: { mode: 'MANAGED', provisionStatus: 'ready', store: { organizationId: org } }, include: { campaigns: { where: { groupId: { not: null } }, select: { id: true, stage: true, dailyBudgetCents: true } } } });
+    const accts = await prisma.adAccount.findMany({ where: { mode: 'MANAGED', provisionStatus: 'ready', store: { organizationId: org } }, include: { campaigns: { where: { groupId: { not: null } }, select: { id: true, stage: true, dailyBudgetCents: true, pausedReason: true, group: { select: { status: true } } } } } });
     const k = 1 + feePct('MANAGED') / 100;
     let uncharged = 0;
     let weightAll = 0;
@@ -447,8 +447,12 @@ export class ManagedBoostService {
       const ids = x.campaigns.map((c) => c.id);
       const charged = ids.length ? (await prisma.adChargeDay.aggregate({ where: { campaignId: { in: ids } }, _sum: { spendOwedCents: true } }))._sum.spendOwedCents ?? 0 : 0;
       uncharged += Math.max(0, spent - charged);
-      // DRAFT here = being launched (campaign rows only exist once a group launches): sized before it can deliver
-      const w = x.campaigns.filter((c) => c.stage === 'DRAFT' || (LIVE as readonly string[]).includes(c.stage)).reduce((n, c) => n + c.dailyBudgetCents, 0);
+      // Weight = campaigns that deliver now or will deliver next: DRAFT (being launched; sized before
+      // it can deliver), LIVE stages, and low-fuel pauses in a LIVE group (QA r4 #2: a top-up must
+      // raise their ceilings BEFORE they resume, and a low-fuel pause must not zero their share).
+      const counts = (c: (typeof x.campaigns)[number]) =>
+        c.stage === 'DRAFT' || (LIVE as readonly string[]).includes(c.stage) || (c.stage === 'PAUSED' && c.pausedReason === 'low_fuel' && c.group?.status === 'LIVE');
+      const w = x.campaigns.filter(counts).reduce((n, c) => n + c.dailyBudgetCents, 0);
       weightAll += w;
       if (x.id === accountId) { weightMe = w; spentMe = spent; }
     }
@@ -507,11 +511,19 @@ export class ManagedBoostService {
     const w = await prisma.adWallet.findUniqueOrThrow({ where: { id: walletId } });
     const f = await this.fuel(w.organizationId);
     if (f.shortfallCents > 0 || f.availableCents <= 0) return { resumed: 0 };
-    await this.recomputeCeilings(w.organizationId); // ceilings first, then turn delivery back on
+    // Ceilings first (sized from the new fuel, low-fuel pauses included), then turn delivery back on.
+    await this.recomputeCeilings(w.organizationId);
     const paused = await prisma.adCampaign.findMany({ where: { groupId: { not: null }, store: { organizationId: w.organizationId }, stage: 'PAUSED', pausedReason: 'low_fuel', group: { status: 'LIVE' } }, include: { adAccount: true } });
     let resumed = 0;
     for (const c of paused) {
       try {
+        // Only resume on an account whose new ceiling actually landed and leaves room to spend;
+        // otherwise it stays paused and the next top-up / sync retries (never resume onto a 0 cap).
+        const a = c.adAccountId ? await prisma.adAccount.findUnique({ where: { id: c.adAccountId } }) : null;
+        if (!a || a.capDirty || a.capMinor == null || a.capMinor <= (a.lifetimeSpendCents ?? 0)) {
+          this.logger.warn(`resume ${c.id}: ceiling not raised yet (${a?.channel} cap ${a?.capMinor ?? '-'}, spent ${a?.lifetimeSpendCents ?? '-'}); staying paused`);
+          continue;
+        }
         await this.setLive(c, true);
         resumed += (await prisma.adCampaign.updateMany({ where: { id: c.id, stage: 'PAUSED', pausedReason: 'low_fuel' }, data: { stage: (await this.learned(c.id)) ? 'STEADY' : 'WARMING', pausedReason: null } })).count;
       } catch (e: any) {
@@ -620,13 +632,16 @@ export class ManagedBoostService {
     const t = campaigns.reduce((a, c) => ({ spend: a.spend + c.totals.spendCents, fee: a.fee + c.totals.feeCents, purchases: a.purchases + c.totals.purchases, revenue: a.revenue + c.totals.revenueCents }), { spend: 0, fee: 0, purchases: 0, revenue: 0 });
     // True profit (blueprint): revenue − product cost − shipping − ad spend − fee. Revenue/purchases are platform-attributed.
     const cogs = (sp?.product.costCents ?? 0) * t.purchases;
+    // QA r4 (d): purchases are platform-attributed counts with no link to our orders, so the actual
+    // shipping on those orders isn't known here. Estimated from the catalog shipping rate and labelled so.
     const shipping = (sp && sp.priceCents >= 5000 ? 0 : 499) * t.purchases;
+    const shippingEstimated = t.purchases > 0;
     return {
       id: g.id, status: g.status, storeId: g.storeId, storeProductId: g.storeProductId, product: sp ? { title: sp.title ?? sp.product.title, priceCents: sp.priceCents, costCents: sp.product.costCents, imageUrl: sp.product.imageUrl, etaDaysMin: sp.product.etaDaysMin, etaDaysMax: sp.product.etaDaysMax } : null,
       channels: g.channels, dailyBudgetCents: g.dailyBudgetCents, split: g.split, variants: g.variants, variantIndex: g.variantIndex, assets: g.assets, policyResult: g.policyResult, policy: g.policy,
       autoLadder: g.autoLadder, ladderStep: g.ladderStep, ladder: LADDER, pickedAt: g.pickedAt, launchRequestedAt: g.launchRequestedAt, launchedAt: g.launchedAt, launchMs: g.launchMs, launchSystemMs: g.launchedAt && g.launchRequestedAt ? g.launchedAt.getTime() - g.launchRequestedAt.getTime() : null, launchTargetMs: LAUNCH_TARGET_MS, lastError: g.lastError,
       feePct: feePct('MANAGED'), minDailyCents: minTotalFor(g.channels as Channel[]),
-      totals: { spendCents: t.spend, feeCents: t.fee, purchases: t.purchases, revenueCents: t.revenue, roas: t.spend ? Math.round((t.revenue / t.spend) * 100) / 100 : null, cpaCents: t.purchases ? Math.round((t.spend + t.fee) / t.purchases) : null, cogsCents: cogs, shippingCents: shipping, trueProfitCents: t.revenue - cogs - shipping - t.spend - t.fee },
+      totals: { spendCents: t.spend, feeCents: t.fee, purchases: t.purchases, revenueCents: t.revenue, roas: t.spend ? Math.round((t.revenue / t.spend) * 100) / 100 : null, cpaCents: t.purchases ? Math.round((t.spend + t.fee) / t.purchases) : null, cogsCents: cogs, shippingCents: shipping, shippingEstimated, shippingBasis: 'catalog_rate', trueProfitCents: t.revenue - cogs - shipping - t.spend - t.fee },
       campaigns,
     };
   }

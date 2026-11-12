@@ -243,9 +243,12 @@ export class StubGoogle implements GoogleAdsClient, MerchantClient {
     return { resourceName: `customers/${customerId}/productLinks/${merchantCenterId}` };
   }
 
+  /** Every adjustment payload received (tests: exactly what would leave for Google) */
+  readonly adjustmentsSent: any[] = [];
   async uploadConversionAdjustments(customerId: string, adjustments: ConversionAdjustment[], o: { partialFailure: true; validateOnly?: boolean }) {
     await this.enter('uploadConversionAdjustments');
     this.customer(customerId);
+    this.adjustmentsSent.push(...adjustments.map((a) => JSON.parse(JSON.stringify(a))));
     const results: { orderId: string }[] = [];
     const errors: string[] = [];
     for (const [i, a] of adjustments.entries()) {

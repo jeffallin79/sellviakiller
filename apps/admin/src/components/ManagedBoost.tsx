@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { api } from '@/lib/api';
+import { splitBudget } from '@storeforge/shared';
 import { Icon } from '@storeforge/ui/icons';
 import { Badge, Bars, Callout, Money, money } from '@storeforge/ui/components';
 
@@ -30,21 +31,8 @@ const PAUSED_WHY: Record<string, string> = { merchant: 'by you', low_fuel: 'out 
 const ACCT: Record<string, { label: string; tone: 'neutral' | 'ok' | 'warn' | 'bad' | 'info' }> = {
   ready: { label: 'Ready', tone: 'ok' }, provisioning: { label: 'Setting up', tone: 'info' }, pending_review: { label: 'Waiting on platform', tone: 'warn' }, failed: { label: 'Needs attention', tone: 'bad' },
 };
-// Same 40/40/20 split as the API (packages: apps/api/src/ads/managed/config.ts); preview only, the API decides.
-const MIN: Record<Ch, number> = { META: 100, GOOGLE: 100, TIKTOK: 2000 };
-const W: Record<Ch, number> = { META: 0.4, GOOGLE: 0.4, TIKTOK: 0.2 };
-function split(total: number, chs: Ch[]) {
-  const out: Partial<Record<Ch, number>> = {};
-  if (!chs.length) return out;
-  let rest = total;
-  const floor = chs.filter((c) => total * (W[c] / chs.reduce((n, x) => n + W[x], 0)) < MIN[c]);
-  for (const c of floor) { out[c] = MIN[c]; rest -= MIN[c]; }
-  const free = chs.filter((c) => !floor.includes(c));
-  const wsum = free.reduce((n, c) => n + W[c], 0);
-  let given = 0;
-  free.forEach((c, i) => { const v = i === free.length - 1 ? rest - given : Math.floor((rest * W[c]) / wsum); out[c] = v; given += v; });
-  return out;
-}
+// The API's own split (shared code): platform minimums first, then 40/40/20 of what's left.
+const split = (total: number, chs: Ch[]) => splitBudget(total, chs) as Partial<Record<Ch, number>>;
 
 function Channels({ o, storeId, onDone, onError }: { o: Overview; storeId: string; onDone: (m: string) => void; onError: (m: string) => void }) {
   const off = o.channels.filter((c) => !c.account);
@@ -269,9 +257,9 @@ function GroupCard({ g, onChange, onError }: { g: Group; onChange: (g?: Group) =
         <div><span className="sf-kpi__label">Sales</span><strong className="sf-num"><Money cents={t.revenueCents} /></strong></div>
         <div><span className="sf-kpi__label">ROAS</span><strong className="sf-num">{t.roas == null ? '—' : `${t.roas}×`}</strong></div>
         <div><span className="sf-kpi__label">Cost per sale</span><strong className="sf-num">{t.cpaCents == null ? '—' : money(t.cpaCents)}</strong></div>
-        <div className="mboost-profit"><span className="sf-kpi__label">True profit</span><strong className={`sf-num${t.trueProfitCents < 0 ? ' is-neg' : ''}`}><Money cents={t.trueProfitCents} /></strong></div>
+        <div className="mboost-profit"><span className="sf-kpi__label">True profit{t.shippingEstimated ? ' (est.)' : ''}</span><strong className={`sf-num${t.trueProfitCents < 0 ? ' is-neg' : ''}`}><Money cents={t.trueProfitCents} /></strong></div>
       </div>
-      {t.purchases > 0 && <p className="sf-hint" style={{ margin: 0 }}>True profit = sales {money(t.revenueCents)} − product cost {money(t.cogsCents)} − shipping {money(t.shippingCents)} − ad spend {money(t.spendCents)} − fee {money(t.feeCents)}.</p>}
+      {t.purchases > 0 && <p className="sf-hint" style={{ margin: 0 }}>True profit = sales {money(t.revenueCents)} − product cost {money(t.cogsCents)} − shipping {money(t.shippingCents)}{t.shippingEstimated ? ' (estimated from the catalog shipping rate)' : ''} − ad spend {money(t.spendCents)} − fee {money(t.feeCents)}.</p>}
       {days.length > 1 && <Bars values={days.map(([, v]) => v)} labels={days.map(([d]) => d.slice(5))} hotIndex={days.length - 1} />}
       {recon.length > 0 && (
         <details className="mboost-recon">

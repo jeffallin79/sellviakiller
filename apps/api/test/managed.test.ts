@@ -19,6 +19,8 @@ import { StubTikTok } from '../src/ads/managed/tiktok';
 import { StubMetaGraph } from '../src/ads/managed/metam';
 import { splitBudget, minTotalFor, LADDER } from '../src/ads/managed/config';
 import type { Channel } from '../src/ads/managed/types';
+import { ManagedBoostController } from '../src/ads/ads.controller';
+import { NotFoundException } from '@nestjs/common';
 import { makeOrg, makeStoreWithProduct, checkoutInput, uid } from './helpers';
 
 const H = 3_600_000;
@@ -83,7 +85,7 @@ let ORG = '';
 const sync = (now = at()) => managed.syncAll(now, 0, ORG);
 
 // ---------- config ----------
-test('budget split: 40/40/20 with per-channel minimums, totals exact', () => {
+test('budget split: platform minimums first, then 40/40/20 of the rest; totals exact', () => {
   const s3 = splitBudget(3000, ['META', 'GOOGLE', 'TIKTOK']);
   assert.equal(s3.META + s3.GOOGLE + s3.TIKTOK, 3000);
   assert.ok(s3.TIKTOK >= 2000 && s3.META >= 100 && s3.GOOGLE >= 100 && s3.META === s3.GOOGLE, JSON.stringify(s3));
@@ -92,6 +94,8 @@ test('budget split: 40/40/20 with per-channel minimums, totals exact', () => {
   assert.ok(s.TIKTOK >= 2000);
   const s2 = splitBudget(1001, ['META', 'GOOGLE']);
   assert.ok(s2.META + s2.GOOGLE === 1001 && Math.abs(s2.META - s2.GOOGLE) <= 1);
+  // QA r4 (a): minimums first, then 40/40/20 of the rest. $60 → $16.20 / $16.20 / $27.60 (admin preview uses this same function)
+  assert.deepEqual(splitBudget(6000, ['META', 'GOOGLE', 'TIKTOK']), { META: 1620, GOOGLE: 1620, TIKTOK: 2760 });
   assert.equal(minTotalFor(['TIKTOK']), 2000);
   assert.equal(minTotalFor(['META']), 1000);
 });
@@ -225,6 +229,36 @@ test('launch: a lost response mid-launch resumes on the next run without duplica
   assert.ok(view.campaigns.every((c: any) => c.externalId));
 });
 
+test('launch: Meta lost responses on adcreatives and ads (committed at Meta) → resume reuses them, no duplicates', async () => {
+  const s = await setup({ fuel: 20_000, channels: ['META'] });
+  const v: any = await managed.createDraft(s.org.id, s.store.id, { storeProductId: s.sp.id, requestId: uid('req') });
+  m.failAfterCommit['POST act/adcreatives'] = new Error('ETIMEDOUT');
+  await managed.launch(s.org.id, v.id);
+  await managed.idle();
+  const count = (kind: string) => Object.values(m.sim.state.objects).filter((x: any) => x.kind === kind).length;
+  assert.equal(count('creative'), 1, 'creative committed at Meta even though we never saw the reply');
+  assert.equal(count('ad'), 0);
+  let view: any = await managed.groupView(v.id);
+  assert.notEqual(view.status, 'LIVE');
+  // second retry loses the ads response too
+  m.failAfterCommit['POST act/ads'] = new Error('socket hang up');
+  await managed.resumeLaunches(new Date(Date.now() + 60_000));
+  await managed.idle();
+  assert.equal(count('creative'), 1, 'creative found by its [sf:] name, not re-created');
+  assert.equal(count('ad'), 1);
+  await managed.resumeLaunches(new Date(Date.now() + 120_000));
+  await managed.idle();
+  view = await managed.groupView(v.id);
+  assert.equal(view.status, 'LIVE');
+  assert.equal(count('campaign'), 1);
+  assert.equal(count('adset'), 1);
+  assert.equal(count('creative'), 1, 'one creative after two lost responses');
+  assert.equal(count('ad'), 1, 'one ad after two lost responses');
+  const refs = (await prisma.adCampaign.findFirstOrThrow({ where: { groupId: v.id, channel: 'META' } })).externalRefs as any;
+  const ad: any = Object.values(m.sim.state.objects).find((x: any) => x.kind === 'ad');
+  assert.equal(refs.ad, ad.id, 'stored ref points at the one ad');
+});
+
 test('launch: ceilings are sized while campaigns are still being created, and current when the group reports LIVE', async () => {
   const s = await setup({ fuel: 20_000 });
   const v: any = await managed.createDraft(s.org.id, s.store.id, { storeProductId: s.sp.id, requestId: uid('req') });
@@ -299,12 +333,44 @@ test('ceilings: platforms can never spend fuel we cannot collect; Meta spend_cap
   const camps = await prisma.adCampaign.findMany({ where: { groupId: s.group.id } });
   assert.ok(camps.every((c) => c.stage === 'PAUSED' && c.pausedReason === 'low_fuel'), camps.map((c) => `${c.channel}:${c.stage}/${c.pausedReason}`).join(' '));
   assert.equal(await prisma.notification.count({ where: { organizationId: s.org.id, kind: 'fuel_empty' } }), 1, 'one notice for the episode');
-  // top up → shortfall settled, ceilings raised first, every channel back on
-  await fund(s.org.id, 10_000);
-  await managed.idle();
-  await managed.onFuelAdded(w.id);
+  // QA r4 #2: the low-fuel pause must not zero the caps: every account stays at least at what it has spent
+  // (no fuel left → no headroom, but never a 0 limit on an account that has spent)
+  const paused = await prisma.adAccount.findMany({ where: { storeId: s.store.id, mode: 'MANAGED' } });
+  for (const a of paused) assert.ok(a.capMinor != null && a.capMinor >= a.lifetimeSpendCents && (a.lifetimeSpendCents === 0 || a.capMinor > 0), `${a.channel} cap ${a.capMinor} spent ${a.lifetimeSpendCents}`);
+  // top up → shortfall settled, ceilings raised from the new fuel FIRST, then every channel back on
+  const capAtResume: Record<string, { cap: number | null; spent: number }> = {};
+  const realSetLive = (managed as any).setLive.bind(managed);
+  (managed as any).setLive = async (c: any, on: boolean) => {
+    if (on) { const a = await prisma.adAccount.findUniqueOrThrow({ where: { id: c.adAccountId } }); capAtResume[a.channel] = { cap: a.capMinor, spent: a.lifetimeSpendCents }; }
+    return realSetLive(c, on);
+  };
+  try {
+    await fund(s.org.id, 50_000);
+    await managed.idle();
+    await managed.onFuelAdded(w.id);
+    await managed.idle();
+  } finally {
+    (managed as any).setLive = realSetLive;
+  }
   const after = await prisma.adCampaign.findMany({ where: { groupId: s.group.id } });
   assert.ok(after.every((c) => c.stage !== 'PAUSED'), after.map((c) => `${c.channel}:${c.stage}`).join(' '));
+  assert.deepEqual(Object.keys(capAtResume).sort(), ['GOOGLE', 'META', 'TIKTOK'], 'every channel resumed');
+  const raised = await prisma.adAccount.findMany({ where: { storeId: s.store.id, mode: 'MANAGED' } });
+  let headroom = 0;
+  for (const a of raised) {
+    const tgt = await managed.ceilingTarget(a.id);
+    assert.ok(tgt.share > 0, `${a.channel}: low-fuel-paused campaign counted in the ceiling share`);
+    assert.equal(a.capMinor, a.channel === 'META' ? Math.max(tgt.capMinor, 10_000) : tgt.capMinor, `${a.channel} cap current after top-up`);
+    // at the moment delivery was turned back on, the platform limit already had room to spend
+    const r = capAtResume[a.channel];
+    assert.ok(r.cap != null && r.cap > r.spent, `${a.channel} resumed onto cap ${r.cap} with spent ${r.spent}`);
+    assert.ok(r.cap === a.capMinor, `${a.channel}: raised before resume, not after`);
+    headroom += (a.channel === 'META' ? tgt.capMinor : a.capMinor!) - a.lifetimeSpendCents;
+  }
+  // headroom across channels ≈ the new fuel / 1.15 (spend + 15% fee), never more
+  const f = await (managed as any).fuel(s.org.id);
+  assert.ok(headroom <= Math.floor(f.availableCents / 1.15) + 3 && headroom >= Math.floor(f.availableCents / 1.15) - 300, `headroom ${headroom} vs fuel ${f.availableCents}`);
+  assert.ok(raised.find((a) => a.channel === 'GOOGLE')!.capMinor! > raised.find((a) => a.channel === 'GOOGLE')!.lifetimeSpendCents, 'Google limit is not 0 / not stuck at spent');
   assert.equal((await prisma.adChargeDay.aggregate({ where: { campaign: { groupId: s.group.id } }, _sum: { shortfallCents: true } }))._sum.shortfallCents ?? 0, 0);
 });
 
@@ -387,6 +453,13 @@ test('conversions: one Purchase per channel (Meta CAPI, Google enhanced conversi
   // Google gets the hashed email only, never raw PII
   const gEv = g.sim.state.events.find((e: any) => e.source === 'server');
   assert.ok(gEv && !JSON.stringify(g.sim.state.events).includes('ada@example.com'));
+  // QA r4 (b): enhanced conversion = hashed email only (no user agent, no IP, no raw email)
+  const adj = g.adjustmentsSent.find((a: any) => a.orderId === orderId);
+  assert.ok(adj, 'adjustment sent');
+  assert.deepEqual(adj.userIdentifiers.map((u: any) => Object.keys(u)), [['hashedEmail']]);
+  assert.match(adj.userIdentifiers[0].hashedEmail, /^[a-f0-9]{64}$/);
+  const raw = JSON.stringify(adj);
+  assert.ok(!('userAgent' in adj) && !raw.includes('Mozilla') && !raw.includes('203.0.113.77') && !raw.includes('example.com'), raw);
 });
 
 test('conversions: no consent → nothing sent to any managed channel', async () => {
@@ -411,4 +484,15 @@ test('pause / resume: every channel follows; resume needs fuel', async () => {
   assert.ok(v.campaigns.every((c: any) => c.stage !== 'PAUSED'));
   const other = await makeOrg();
   await assert.rejects(() => managed.pause(other.id, s.group.id), /Boost not found/);
+});
+
+test('GET /boost/managed/groups/:id: another org or unknown id → real 404 (QA r4 c)', async () => {
+  const s = await launched({ fuel: 20_000 });
+  const ctrl = new ManagedBoostController({ requireAccountId: async (id: string) => id } as any, managed);
+  const mine: any = await ctrl.group({ id: s.org.id } as any, s.group.id);
+  assert.equal(mine.id, s.group.id);
+  const other = await makeOrg();
+  await assert.rejects(ctrl.group({ id: other.id } as any, s.group.id), (e: any) => e instanceof NotFoundException && e.getStatus() === 404);
+  await assert.rejects(ctrl.group({ id: s.org.id } as any, 'nope'), NotFoundException);
+  assert.equal(mine.totals.shippingEstimated, mine.totals.purchases > 0, 'shipping in true profit flagged as an estimate when used');
 });

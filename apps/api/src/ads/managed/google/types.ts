@@ -37,7 +37,8 @@ export type ConversionAdjustment = {
   conversionAction: string; adjustmentType: 'ENHANCEMENT'; orderId: string;
   gclidDateTimePair?: { gclid: string; conversionDateTime: string };
   userIdentifiers: ({ hashedEmail: string } | { hashedPhoneNumber: string } | { addressInfo: Record<string, string> })[];
-  userAgent?: string; adjustmentDateTime?: string;
+  /** QA r4 (b): we send hashed email only, no user agent / IP */
+  adjustmentDateTime?: string;
 };
 
 export interface GoogleAdsClient {
