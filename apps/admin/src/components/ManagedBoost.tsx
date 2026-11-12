@@ -309,10 +309,10 @@ function Events({ storeId, tick }: { storeId: string; tick: number }) {
         <p className="sf-hint">Every sale goes to each channel twice, from the shopper&apos;s browser and from our server, with the same ID, so each platform counts it once. Google gets a hashed email only.</p></div>
       {rows.length === 0 ? <p className="sf-muted" style={{ padding: '0 18px 18px', margin: 0 }}>No purchases yet.</p> : (
         <div className="sf-table-wrap">
-          <table className="sf-table">
-            <thead><tr><th>Received</th><th>Channel</th><th>Event</th><th>From</th><th>ID</th><th>Counted</th></tr></thead>
+          <table className="sf-table mboost-events">
+            <thead><tr><th>Received</th><th>Channel</th><th>Event</th><th>From</th><th>Order</th><th>Counted</th></tr></thead>
             <tbody>{rows.map((e: any, i: number) => (
-              <tr key={i}><td className="sf-mono sf-muted">{new Date(e.receivedAt).toLocaleTimeString('en-US')}</td><td>{SHORT[e.channel as Ch]}</td><td>{e.eventName}</td><td>{e.source === 'server' ? 'Server' : 'Browser'}</td><td className="sf-mono">{String(e.eventId).slice(0, 22)}</td><td>{e.deduplicated ? <Badge tone="info">Deduplicated</Badge> : <Badge tone="ok">Counted</Badge>}</td></tr>
+              <tr key={i}><td className="sf-mono sf-muted">{new Date(e.receivedAt).toLocaleTimeString('en-US')}</td><td>{SHORT[e.channel as Ch]}</td><td>{e.eventName}</td><td>{e.source === 'server' ? 'Server' : 'Browser'}</td><td className="sf-mono" title={String(e.eventId)}>{String(e.eventId).replace(/^order_/, '').slice(-10)}</td><td>{e.deduplicated ? <Badge tone="info">Deduplicated</Badge> : <Badge tone="ok">Counted</Badge>}</td></tr>
             ))}</tbody>
           </table>
         </div>

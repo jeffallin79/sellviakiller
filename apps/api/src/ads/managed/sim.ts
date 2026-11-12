@@ -140,14 +140,17 @@ export class AdSim {
     if (!c) return [];
     const m = this.integrate(c.account).byCampaign.get(campaignId) ?? new Map();
     const rows: { date: string; spendMinor: number; impressions: number; clicks: number; conversions: number; valueMinor: number }[] = [];
+    let cum = 0; // conversions accrue on cumulative spend, so small daily budgets still convert on average
     for (const [date, v] of [...m.entries()].sort()) {
-      if (date < since || date > until) continue;
       const f = Number(c.extra?.revise ?? 1);
       const spendMinor = Math.floor(v * (date < utcDay(this.now()) ? f : 1));
+      const before = cum;
+      cum += Math.max(0, spendMinor);
+      if (date < since || date > until) continue;
       if (spendMinor <= 0) continue;
       const impressions = Math.floor((spendMinor / (900 + unit(`cpm${campaignId}`) * 900)) * 1000);
       const clicks = Math.floor(impressions * (0.009 + 0.01 * unit(`ctr${campaignId}${date}`)));
-      const conversions = Math.floor(spendMinor / c.cpaMinor);
+      const conversions = Math.floor(cum / c.cpaMinor) - Math.floor(before / c.cpaMinor);
       rows.push({ date, spendMinor, impressions, clicks, conversions, valueMinor: conversions * c.aovMinor });
     }
     return rows;

@@ -220,7 +220,10 @@
 .mboost-timer__bar { height: 8px; border-radius: 99px; background: rgb(var(--sf-line)); overflow: hidden; }
 .mboost-timer__bar span { display: block; height: 100%; background: rgb(var(--sf-money)); transition: width 0.4s; }
 .mboost-timer__bar span.is-late { background: rgb(var(--sf-danger)); }
-.mboost-table td, .mboost-table th { white-space: nowrap; }
+.mboost-table th, .mboost-table td.sf-num, .mboost-events th, .mboost-events td:first-child { white-space: nowrap; }
+.mboost-table th, .mboost-table td, .mboost-events th, .mboost-events td { padding-left: 8px; padding-right: 8px; }
+.mboost-table th:first-child, .mboost-table td:first-child, .mboost-events th:first-child, .mboost-events td:first-child { padding-left: 18px; }
+.mboost-table td .sf-mono { font-size: 0.72rem; overflow-wrap: anywhere; }
 .mboost-profit strong.is-neg { color: rgb(var(--sf-danger)); }
 .mboost-recon summary { cursor: pointer; font-weight: 600; }
 .mboost-recon ul { margin: 8px 0 0; padding-left: 18px; }
