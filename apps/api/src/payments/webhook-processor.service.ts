@@ -3,6 +3,7 @@ import { prisma, Prisma } from '@storeforge/db';
 import { OrdersService, PaymentMismatchError } from '../orders/orders.service';
 import { NotificationsService } from './notifications.service';
 import { RefundsService } from '../orders/refunds.service';
+import { AdWalletService } from '../ads/wallet.service';
 import { BillingService } from '../billing/billing.service';
 import { FuelService } from './fuel.service';
 import { PayoutsService } from './payouts.service';
@@ -32,6 +33,7 @@ export class WebhookProcessorService {
     private readonly disputes: DisputesService,
     private readonly notifications: NotificationsService,
     private readonly refunds: RefundsService,
+    private readonly wallet: AdWalletService = new AdWalletService(),
   ) {}
 
   async process(event: ProviderEvent, endpoint: WebhookEndpoint): Promise<WebhookResult> {
@@ -134,14 +136,23 @@ export class WebhookProcessorService {
       }
       case 'payment_intent.succeeded': {
         if (o.metadata?.kind !== 'ad_fuel_topup') return 'ignored';
+        const pm = typeof o.payment_method === 'string' ? o.payment_method : o.payment_method?.id;
         const r = await this.fuel.creditTopUp({
           paymentIntentId: o.id,
           amountCents: o.amount_received ?? o.amount,
           walletId: o.metadata.walletId,
           organizationId: o.metadata.organizationId,
           provider: 'stripe',
+          source: o.metadata.source === 'auto' ? 'auto' : 'manual',
+          // Card saved for auto-reload only when the payment asked for it
+          paymentMethodId: pm && (o.setup_future_usage === 'off_session' || o.metadata.source === 'auto') ? pm : null,
         });
         return r.credited ? 'fuel_credited' : 'fuel_duplicate';
+      }
+      case 'payment_intent.payment_failed': {
+        if (o.metadata?.kind !== 'ad_fuel_topup' || o.metadata.source !== 'auto') return 'ignored';
+        await this.wallet.reloadPaymentFailed(o.metadata.walletId, o.last_payment_error?.message ?? 'Payment failed');
+        return 'autoreload_failed';
       }
       case 'refund.created':
       case 'refund.updated':

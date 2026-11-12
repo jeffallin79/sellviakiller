@@ -197,6 +197,68 @@ export class StripePaymentProvider implements PaymentProvider {
     return { paymentIntentId: pi.id, clientSecret: pi.client_secret, status: pi.status };
   }
 
+  async createTopUpCheckout(o: {
+    organizationId: string;
+    walletId: string;
+    customerId: string;
+    amountCents: number;
+    currency: string;
+    successUrl: string;
+    cancelUrl: string;
+    idempotencyKey: string;
+  }) {
+    const meta = { kind: 'ad_fuel_topup', organizationId: o.organizationId, walletId: o.walletId, source: 'manual' };
+    const s = await this.stripe.checkout.sessions.create(
+      {
+        mode: 'payment',
+        customer: o.customerId,
+        line_items: [{ quantity: 1, price_data: { currency: o.currency.toLowerCase(), unit_amount: o.amountCents, product_data: { name: 'StoreForge Ad Fuel' } } }],
+        // Saved for auto-reload; the wallet is credited by payment_intent.succeeded (metadata below).
+        payment_intent_data: { setup_future_usage: 'off_session', metadata: meta, description: 'StoreForge Ad Fuel top-up' },
+        metadata: meta,
+        success_url: o.successUrl,
+        cancel_url: o.cancelUrl,
+      },
+      { idempotencyKey: o.idempotencyKey },
+    );
+    return { url: s.url!, sessionId: s.id };
+  }
+
+  async chargeSavedCard(o: {
+    organizationId: string;
+    walletId: string;
+    customerId: string;
+    paymentMethodId: string;
+    amountCents: number;
+    currency: string;
+    idempotencyKey: string;
+  }) {
+    const pi = await this.stripe.paymentIntents.create(
+      {
+        amount: o.amountCents,
+        currency: o.currency.toLowerCase(),
+        customer: o.customerId,
+        payment_method: o.paymentMethodId,
+        off_session: true,
+        confirm: true,
+        description: 'StoreForge Ad Fuel auto-reload',
+        metadata: { kind: 'ad_fuel_topup', organizationId: o.organizationId, walletId: o.walletId, source: 'auto' },
+      },
+      { idempotencyKey: o.idempotencyKey },
+    );
+    return { paymentIntentId: pi.id, status: pi.status };
+  }
+
+  async describePaymentMethod(id: string) {
+    try {
+      const pm = await this.stripe.paymentMethods.retrieve(id);
+      if (pm.card) return { label: `${pm.card.brand[0].toUpperCase()}${pm.card.brand.slice(1)} •••• ${pm.card.last4}` };
+      return { label: pm.type };
+    } catch {
+      return null;
+    }
+  }
+
   async refundPayment(o: { paymentId: string; amountCents: number; idempotencyKey: string; metadata?: Record<string, string>; reverseTransfer?: boolean }) {
     const r = await this.stripe.refunds.create(
       {

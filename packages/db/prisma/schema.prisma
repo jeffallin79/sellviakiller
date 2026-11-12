@@ -205,11 +205,15 @@ model Store {
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
 
-  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization  Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   storeProducts StoreProduct[]
   orders        Order[]
   domains       Domain[]
   emails        EmailMessage[]
+  adConnections AdConnection[]
+  adAccounts    AdAccount[]
+  campaigns     AdCampaign[]
+  conversions   ConversionEvent[]
 
   @@index([organizationId])
   @@index([status])
@@ -325,6 +329,8 @@ model Order {
   flaggedAt          DateTime?
   /// Sum of succeeded + in-flight refunds (reserved before the provider call)
   refundedCents      Int         @default(0)
+  /// Ads attribution captured at checkout (slice 3): { consent, fbp, fbc, ip, ua, sourceUrl }
+  attribution        Json?
   createdAt          DateTime    @default(now())
   updatedAt          DateTime    @updatedAt
 
@@ -424,15 +430,29 @@ enum WalletTxnKind {
 
 /// Ad Fuel wallet (prepaid promotion credit). Phase 1 slice 3 builds the UI/jobs on top.
 model AdWallet {
-  id              String   @id @default(cuid())
-  organizationId  String   @unique
-  balanceCents    Int      @default(0) // refundable fuel
-  bonusCents      Int      @default(0) // promo fuel, never refundable
-  autoReloadCents Int      @default(0)
-  thresholdCents  Int      @default(0)
-  currency        String   @default("USD")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                 String    @id @default(cuid())
+  organizationId     String    @unique
+  balanceCents       Int       @default(0) // refundable fuel
+  bonusCents         Int       @default(0) // promo fuel, never refundable
+  autoReloadCents    Int       @default(0)
+  thresholdCents     Int       @default(0)
+  currency           String    @default("USD")
+  /// Auto-reload (slice 3): off-session charge of autoReloadCents when fuel < thresholdCents
+  autoReloadEnabled  Boolean   @default(false)
+  /// Card saved by a top-up (setup_future_usage=off_session)
+  paymentMethodId    String?
+  paymentMethodLabel String?
+  /// Single-flight claim: set while a reload is in flight (key = sf-autoreload-<wallet>-<seq>)
+  reloadSeq          Int       @default(0)
+  reloadInFlight     Boolean   @default(false)
+  reloadStartedAt    DateTime?
+  /// Amount claimed for the in-flight reload (a retry must reuse it with the same idempotency key)
+  reloadAmountCents  Int       @default(0)
+  reloadFailures     Int       @default(0)
+  reloadLastError    String?
+  lowFuelAt          DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   txns         WalletTxn[]
@@ -457,6 +477,14 @@ model WalletTxn {
   reconciledAt      DateTime?
   campaignId        String?
   day               DateTime?
+  /// TOPUP: manual | auto
+  source            String?
+  /// Wallet balances right after this entry (ledger running balance)
+  balanceAfterCents Int?
+  bonusAfterCents   Int?
+  /// Debits: which part of the charge came from bonus fuel (<= 0)
+  bonusCents        Int           @default(0)
+  note              String?
   createdAt         DateTime      @default(now())
 
   wallet AdWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
@@ -598,4 +626,197 @@ model EmailMessage {
 
   @@index([storeId, createdAt])
   @@index([orderId])
+}
+
+// ---------------- Phase 1 slice 3: Boost (Meta connect-your-own) + Ad Fuel jobs ----------------
+
+enum AdChannel {
+  META
+  GOOGLE
+  TIKTOK
+}
+
+enum AdAccountMode {
+  MANAGED
+  OWNED
+}
+
+enum AdCampaignStage {
+  DRAFT
+  REVIEW
+  WARMING
+  STEADY
+  PAUSED
+  REJECTED
+}
+
+/// One-time OAuth state (CSRF + binds the callback to the store/user that started it)
+model OAuthState {
+  id        String    @id // random nonce sent as `state`
+  channel   AdChannel
+  storeId   String
+  userId    String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+}
+
+/// OAuth grant for a store (merchant's own Meta login). Token is AES-256-GCM encrypted.
+model AdConnection {
+  id             String    @id @default(cuid())
+  storeId        String
+  channel        AdChannel
+  externalUserId String
+  externalName   String?
+  tokenCipher    String
+  tokenExpiresAt DateTime?
+  scopes         String[]
+  status         String    @default("active") // active | expired | revoked
+  lastError      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  store    Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  accounts AdAccount[]
+
+  @@unique([storeId, channel])
+}
+
+model AdAccount {
+  id            String        @id @default(cuid())
+  storeId       String
+  channel       AdChannel
+  mode          AdAccountMode
+  externalId    String // act_123…
+  name          String
+  currency      String        @default("USD")
+  timezone      String?
+  status        String        @default("active") // active | disabled | disconnected
+  /// OWNED: AdConnection id holding the token; MANAGED: platform system user
+  tokenRef      String?
+  pixelId       String?
+  pixelName     String?
+  /// Facebook Page the ads run as (object_story_spec.page_id)
+  pageId        String?
+  pageName      String?
+  /// Meta Events Manager "Test events" code; sent as test_event_code while set
+  testEventCode String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  store      Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  connection AdConnection? @relation(fields: [tokenRef], references: [id], onDelete: SetNull)
+  campaigns  AdCampaign[]
+
+  @@unique([storeId, channel, mode])
+}
+
+model AdCampaign {
+  id                 String          @id @default(cuid())
+  storeId            String
+  adAccountId        String
+  storeProductId     String?
+  channel            AdChannel
+  name               String
+  /// Meta ids, filled step by step so a retried launch resumes instead of duplicating
+  externalId         String?
+  externalAdSetId    String?
+  externalAdId       String?
+  externalCreativeId String?
+  dailyBudgetCents   Int
+  stage              AdCampaignStage @default(DRAFT)
+  ladderStep         Int             @default(0)
+  /// Merchant's idempotency key for "create campaign"
+  requestId          String
+  pausedReason       String? // merchant | low_fuel | rejected | disconnected
+  lastError          String?
+  launchedAt         DateTime?
+  /// Short lease while a launch talks to Meta (double-click / two workers can't create twice)
+  launchLockedUntil  DateTime?
+  lastSyncedAt       DateTime?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  store     Store            @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  adAccount AdAccount        @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+  creatives AdCreative[]
+  insights  AdInsightDaily[]
+  charges   AdChargeDay[]
+
+  @@unique([storeId, requestId])
+  @@index([stage])
+}
+
+model AdCreative {
+  id           String   @id @default(cuid())
+  campaignId   String
+  type         String   @default("image") // image | video | carousel
+  assetUrl     String?
+  headline     String
+  body         String
+  policyStatus String   @default("pending") // pending | approved | rejected
+  createdAt    DateTime @default(now())
+
+  campaign AdCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+}
+
+model AdInsightDaily {
+  id           String   @id @default(cuid())
+  campaignId   String
+  date         DateTime @db.Date
+  impressions  Int      @default(0)
+  clicks       Int      @default(0)
+  spendCents   Int      @default(0)
+  purchases    Int      @default(0)
+  revenueCents Int      @default(0)
+  syncedAt     DateTime @default(now())
+
+  campaign AdCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, date])
+}
+
+/// What a campaign owes the wallet for one day vs what was actually debited. Debits are deltas
+/// against this row, taken under a wallet row lock, so re-running the job never double-charges.
+model AdChargeDay {
+  id                String   @id @default(cuid())
+  campaignId        String
+  walletId          String
+  date              DateTime @db.Date
+  spendOwedCents    Int      @default(0)
+  feeOwedCents      Int      @default(0)
+  spendDebitedCents Int      @default(0)
+  feeDebitedCents   Int      @default(0)
+  /// Owed but not covered by fuel (wallet ran dry); campaign is paused, settled on next top-up
+  shortfallCents    Int      @default(0)
+  updatedAt         DateTime @updatedAt
+
+  campaign AdCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, date])
+  @@index([walletId])
+}
+
+/// Server-side conversion (Meta CAPI). eventId is shared with the browser pixel for dedupe.
+model ConversionEvent {
+  id            String    @id @default(cuid())
+  storeId       String
+  orderId       String
+  eventName     String // Purchase
+  eventId       String    @unique
+  sentMeta      Boolean   @default(false)
+  sentGoogle    Boolean   @default(false)
+  sentTikTok    Boolean   @default(false)
+  metaStatus    String    @default("pending") // pending | sent | skipped | failed
+  metaTrace     String?
+  testEventCode String?
+  attempts      Int       @default(0)
+  lastError     String?
+  payload       Json?
+  sentAt        DateTime?
+  createdAt     DateTime  @default(now())
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([storeId])
 }

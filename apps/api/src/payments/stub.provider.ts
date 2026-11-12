@@ -53,6 +53,20 @@ export class StubPaymentProvider implements PaymentProvider {
   async createTopUpIntent(_o: { amountCents: number }) {
     return { paymentIntentId: `stub_pi_${randomUUID()}`, clientSecret: null, status: 'succeeded' };
   }
+  async createTopUpCheckout(o: { successUrl: string }) {
+    const id = `stub_cs_fuel_${randomUUID()}`;
+    return { url: `${o.successUrl}${o.successUrl.includes('?') ? '&' : '?'}stub=1`, sessionId: id };
+  }
+  /** Stub card "stub_pm_declined" is declined like a real card_declined (definite 402). */
+  async chargeSavedCard(o: { paymentMethodId: string; idempotencyKey: string }) {
+    if (o.paymentMethodId === 'stub_pm_declined') {
+      throw Object.assign(new Error('Your card was declined.'), { type: 'StripeCardError', statusCode: 402, code: 'card_declined' });
+    }
+    return { paymentIntentId: `stub_pi_${o.idempotencyKey}`, status: 'succeeded' };
+  }
+  async describePaymentMethod(id: string) {
+    return id.startsWith('stub_pm_') ? { label: id === 'stub_pm_declined' ? 'Test card •••• 0002' : 'Visa •••• 4242 (test)' } : null;
+  }
   async refundPayment(_o: { paymentId: string }) {
     return { refundId: `stub_re_${randomUUID()}`, status: 'succeeded' };
   }

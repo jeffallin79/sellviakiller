@@ -1,10 +1,13 @@
 import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import { prisma, Prisma } from '@storeforge/db';
 import { getPaymentProvider, isDefiniteRejection } from './index';
+import { creditTopUp as ledgerCredit, lockWallet } from '../ads/ledger';
 
 const MIN_TOPUP = 1000; // $10
 const MAX_TOPUP = 500000; // $5,000
 const REFUND_WINDOW_DAYS = 90;
+
+const STUB_CARD = { paymentMethodId: 'stub_pm_visa', paymentMethodLabel: 'Visa •••• 4242 (test)' };
 
 function isUniqueViolation(e: unknown) {
   return e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002';
@@ -14,7 +17,8 @@ function isUniqueViolation(e: unknown) {
  * Ad Fuel wallet money movement. Top-ups are platform-account PaymentIntents;
  * the wallet is credited only from the verified payment_intent.succeeded webhook
  * (or instantly in stub mode). Unused, non-bonus fuel is refundable within 90 days.
- * UI, auto-reload and daily spend debits are Phase 1 slice 3.
+ * Auto-reload and daily spend debits: ads/wallet.service.ts. All balance changes take the wallet
+ * row lock (ads/ledger.ts) and record the running balance on each ledger entry.
  */
 @Injectable()
 export class FuelService {
@@ -54,32 +58,50 @@ export class FuelService {
       idempotencyKey: `sf-fuel-${w.id}-${requestId}`,
     });
     if (provider.kind === 'stub') {
-      await this.creditTopUp({ paymentIntentId: pi.paymentIntentId, amountCents, walletId: w.id, provider: 'stub' });
+      await this.creditTopUp({ paymentIntentId: pi.paymentIntentId, amountCents, walletId: w.id, provider: 'stub', ...STUB_CARD });
     }
     return { paymentIntentId: pi.paymentIntentId, clientSecret: pi.clientSecret, status: pi.status, mode: provider.mode() };
   }
 
+  /**
+   * Admin "Top up": Stripe Checkout (payment mode, card saved for auto-reload). The wallet is
+   * credited by the payment_intent.succeeded webhook. Stub mode credits immediately.
+   */
+  async startTopUpCheckout(organizationId: string, email: string, amountCents: number, requestId: string, returnUrl: string) {
+    if (!Number.isInteger(amountCents) || amountCents < MIN_TOPUP || amountCents > MAX_TOPUP) {
+      throw new BadRequestException(`Top-up must be between $${MIN_TOPUP / 100} and $${MAX_TOPUP / 100}`);
+    }
+    const provider = getPaymentProvider();
+    if (provider.kind === 'stub') {
+      const r = await this.startTopUp(organizationId, email, amountCents, requestId);
+      return { mode: 'stub' as const, url: null, credited: true, paymentIntentId: r.paymentIntentId };
+    }
+    const w = await this.wallet(organizationId);
+    const org = await prisma.organization.findUniqueOrThrow({ where: { id: organizationId } });
+    const { customerId } = await provider.ensureCustomer({ organizationId, email, customerId: org.billingCustomerId });
+    if (!org.billingCustomerId) await prisma.organization.update({ where: { id: organizationId }, data: { billingCustomerId: customerId } });
+    const sep = returnUrl.includes('?') ? '&' : '?';
+    const s = await provider.createTopUpCheckout({
+      organizationId, walletId: w.id, customerId, amountCents, currency: w.currency,
+      successUrl: `${returnUrl}${sep}topup=success`, cancelUrl: `${returnUrl}${sep}topup=cancelled`,
+      idempotencyKey: `sf-fuelcs-${w.id}-${requestId}`,
+    });
+    return { mode: provider.mode(), url: s.url, credited: false, sessionId: s.sessionId };
+  }
+
   /** Idempotent: a replayed webhook for the same PaymentIntent is a no-op. */
-  async creditTopUp(o: { paymentIntentId: string; amountCents: number; walletId: string; provider: string; organizationId?: string }) {
+  async creditTopUp(o: {
+    paymentIntentId: string; amountCents: number; walletId: string; provider: string; organizationId?: string;
+    source?: 'manual' | 'auto'; paymentMethodId?: string | null; paymentMethodLabel?: string | null;
+  }) {
     const w = await prisma.adWallet.findUnique({ where: { id: o.walletId } });
     if (!w) throw new NotFoundException('Wallet not found');
     if (o.organizationId && w.organizationId !== o.organizationId) {
       throw new BadRequestException('Wallet/organization mismatch');
     }
-    const seen = await prisma.walletTxn.findFirst({ where: { kind: 'TOPUP', providerPaymentId: o.paymentIntentId } });
-    if (seen) return { credited: false, duplicate: true };
-    try {
-      return await prisma.$transaction(async (tx) => {
-        const txn = await tx.walletTxn.create({
-          data: { walletId: w.id, kind: 'TOPUP', amountCents: o.amountCents, provider: o.provider, providerPaymentId: o.paymentIntentId },
-        });
-        await tx.adWallet.update({ where: { id: w.id }, data: { balanceCents: { increment: o.amountCents } } });
-        return { credited: true, txnId: txn.id };
-      });
-    } catch (e) {
-      if (isUniqueViolation(e)) return { credited: false, duplicate: true };
-      throw e;
-    }
+    let label = o.paymentMethodLabel ?? null;
+    if (o.paymentMethodId && !label) label = (await getPaymentProvider().describePaymentMethod(o.paymentMethodId).catch(() => null))?.label ?? null;
+    return ledgerCredit({ ...o, paymentMethodLabel: label });
   }
 
   async refundable(topupTxnId: string) {
@@ -107,13 +129,17 @@ export class FuelService {
     // Reserve the fuel and persist the pending refund record in one transaction (balance can't go
     // below zero: guarded here and by the AdWallet_balance_nonnegative CHECK constraint).
     const txn = await prisma.$transaction(async (tx) => {
-      const reserved = await tx.adWallet.updateMany({
-        where: { id: w.id, balanceCents: { gte: amount } },
-        data: { balanceCents: { decrement: amount } },
-      });
-      if (reserved.count !== 1) throw new BadRequestException('Only unspent fuel can be refunded');
+      const locked = await lockWallet(tx, w.id);
+      if (locked.balanceCents < amount) throw new BadRequestException('Only unspent fuel can be refunded');
+      // Re-check under the lock: a concurrent refund of the same top-up may have just reserved.
+      const again = await tx.walletTxn.aggregate({ where: { kind: 'REFUND', refundOfId: topup.id, status: { not: 'failed' } }, _sum: { amountCents: true } });
+      if (amount > topup.amountCents + (again._sum.amountCents ?? 0)) throw new BadRequestException('More than the unrefunded part of this top-up');
+      await tx.adWallet.update({ where: { id: w.id }, data: { balanceCents: locked.balanceCents - amount } });
       return tx.walletTxn.create({
-        data: { walletId: w.id, kind: 'REFUND', amountCents: -amount, provider: topup.provider, refundOfId: topup.id, status: 'pending' },
+        data: {
+          walletId: w.id, kind: 'REFUND', amountCents: -amount, provider: topup.provider, refundOfId: topup.id, status: 'pending',
+          balanceAfterCents: locked.balanceCents - amount, bonusAfterCents: locked.bonusCents,
+        },
       });
     });
 
@@ -217,11 +243,15 @@ export class FuelService {
     if (seen) return { matched: true, reversed: false, duplicate: true };
     try {
       await prisma.$transaction(async (tx) => {
+        const w = await lockWallet(tx, txn.walletId);
         await tx.walletTxn.create({
-          data: { walletId: txn.walletId, kind: 'ADJUST', amountCents: -txn.amountCents, provider: txn.provider, providerRefundId: refundId, refundOfId: txn.refundOfId },
+          data: {
+            walletId: txn.walletId, kind: 'ADJUST', amountCents: -txn.amountCents, provider: txn.provider, providerRefundId: refundId, refundOfId: txn.refundOfId,
+            note: 'Refund to card failed; fuel returned', balanceAfterCents: w.balanceCents - txn.amountCents, bonusAfterCents: w.bonusCents,
+          },
         });
         await tx.walletTxn.update({ where: { id: txn.id }, data: { status: 'failed' } });
-        await tx.adWallet.update({ where: { id: txn.walletId }, data: { balanceCents: { increment: -txn.amountCents } } });
+        await tx.adWallet.update({ where: { id: txn.walletId }, data: { balanceCents: w.balanceCents - txn.amountCents } });
       });
       return { matched: true, reversed: true };
     } catch (e) {

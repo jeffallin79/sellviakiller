@@ -14,3 +14,6 @@ data/
 .env
 *.tsbuildinfo
 .outbox/
+
+# Stub Meta Marketing API state (dev)
+.stub-meta.json

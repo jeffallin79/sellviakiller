@@ -84,6 +84,29 @@ export interface PaymentProvider {
     currency: string;
     idempotencyKey: string;
   }): Promise<{ paymentIntentId: string; clientSecret: string | null; status: string }>;
+  /** Hosted top-up page (Stripe Checkout, payment mode). Saves the card for auto-reload. */
+  createTopUpCheckout(opts: {
+    organizationId: string;
+    walletId: string;
+    customerId: string;
+    amountCents: number;
+    currency: string;
+    successUrl: string;
+    cancelUrl: string;
+    idempotencyKey: string;
+  }): Promise<{ url: string; sessionId: string }>;
+  /** Off-session charge of the saved card (auto-reload). Same idempotency key → same PaymentIntent. */
+  chargeSavedCard(opts: {
+    organizationId: string;
+    walletId: string;
+    customerId: string;
+    paymentMethodId: string;
+    amountCents: number;
+    currency: string;
+    idempotencyKey: string;
+  }): Promise<{ paymentIntentId: string; status: string }>;
+  /** "Visa •••• 4242" for a saved card, or null if it's gone. */
+  describePaymentMethod(paymentMethodId: string): Promise<{ label: string } | null>;
   refundPayment(opts: {
     paymentId: string;
     amountCents: number;
