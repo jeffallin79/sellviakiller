@@ -16,6 +16,10 @@ const CATEGORIES = [
   'Office',
 ];
 
+/** Bundled art (apps/*/public/catalog, scripts/gen-catalog-art.py): same-origin, no third-party image host. */
+const catalogImage = (category: string, i: number) =>
+  `/catalog/${category.toLowerCase().replace(/&/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${(Math.floor(i / CATEGORIES.length) % 4) + 1}.svg`;
+
 const ADJECTIVES = [
   'Premium', 'Compact', 'Wireless', 'Eco', 'Pro', 'Ultra', 'Smart', 'Portable',
   'Deluxe', 'Minimal', 'Rugged', 'Soft', 'Classic', 'Modern', 'Essential',
@@ -74,6 +78,14 @@ async function main() {
     create: { code: 'zendrop', name: 'Zendrop (stub)', active: false },
   });
 
+  // Older seeds used remote picsum photos: switch those rows to the bundled art.
+  const remote = await prisma.product.findMany({ where: { imageUrl: { startsWith: 'https://picsum.photos/' } }, select: { id: true, category: true, externalId: true } });
+  for (const p of remote) {
+    const n = Number(/(\d+)$/.exec(p.externalId)?.[1] ?? 1) - 1;
+    await prisma.product.update({ where: { id: p.id }, data: { imageUrl: catalogImage(p.category ?? CATEGORIES[n % CATEGORIES.length], n) } });
+  }
+  if (remote.length) console.log(`Replaced ${remote.length} remote placeholder image(s) with bundled art`);
+
   const existing = await prisma.product.count({ where: { supplierId: cj.id } });
   if (existing >= seedCount) {
     console.log(`Catalog already has ${existing} SKUs — skip fixture seed`);
@@ -111,7 +123,7 @@ async function main() {
         priceCents,
         costCents,
         currency: 'USD',
-        imageUrl: `https://picsum.photos/seed/storeforge${i}/600/600`,
+        imageUrl: catalogImage(category, i),
         category,
         etaDaysMin: etaMin,
         etaDaysMax: etaMax,

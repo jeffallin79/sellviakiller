@@ -19,7 +19,7 @@ export type Decision =
 
 const RESERVED = new Set(['www', 'admin', 'api', 'stores']);
 /** Paths that exist at the site root on every host (not per-shop). */
-const GLOBAL = [/^\/checkout(\/|$)/, /^\/unknown-domain(\/|$)/, /^\/_next\//, /^\/favicon\.ico$/];
+const GLOBAL = [/^\/catalog\//, /^\/checkout(\/|$)/, /^\/unknown-domain(\/|$)/, /^\/_next\//, /^\/favicon\.ico$/];
 
 export function hostnameOf(hostHeader: string | null | undefined): string {
   return String(hostHeader ?? '').trim().toLowerCase().replace(/:\d+$/, '').replace(/\.$/, '');
