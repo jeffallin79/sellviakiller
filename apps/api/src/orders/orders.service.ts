@@ -188,14 +188,52 @@ export class OrdersService {
     if (!order) throw new NotFoundException('Order not found');
     if (r.count !== 1) return { ...order, transitioned: false };
 
-    // Customer confirmation (deduped per order; never blocks fulfillment).
+    // 1) Fulfilment first, right after the paid write. If the process dies before or during this,
+    //    sweepPaid() finds the PAID order with no fulfilment and routes it (idempotent).
+    await this.startFulfillment(orderId);
+    // 2) Confirmation email: only the outbox row is written here; delivery is a job / background
+    //    send and never delays (or blocks) fulfilment. A lost row is recreated by sweepPaid().
     await this.emails.orderEvent('ORDER_CONFIRMED', orderId);
-
-    const q = await enqueueRouteFulfillment(orderId);
-    if (q.inline) {
-      await this.fulfillment.routeOrder(orderId);
-    }
     return { ...order, transitioned: true };
+  }
+
+  /** Enqueue routing (jobId per order) or, without Redis, route inline. Never throws: the sweeper retries. */
+  private async startFulfillment(orderId: string) {
+    try {
+      const q = await enqueueRouteFulfillment(orderId);
+      if (q.inline) await this.fulfillment.routeOrder(orderId);
+    } catch (e: any) {
+      this.logger.error(`Order ${orderId}: fulfilment not started yet (${e?.message ?? e}); the sweeper will retry`);
+    }
+  }
+
+  /**
+   * Crash recovery for the paid → fulfilment → email chain. Every step is idempotent
+   * (Fulfillment.orderId unique, route jobId per order, EmailMessage.dedupeKey unique), so several
+   * instances can sweep at once. graceMs leaves a just-paid order to the request that's handling it.
+   */
+  async sweepPaid(now = new Date(), graceMs = 2 * 60_000) {
+    const cutoff = new Date(now.getTime() - graceMs);
+    const unrouted = await prisma.order.findMany({
+      where: { status: OrderStatus.PAID, fulfillment: null, updatedAt: { lt: cutoff } },
+      select: { id: true },
+      orderBy: { updatedAt: 'asc' },
+      take: 50,
+    });
+    for (const o of unrouted) await this.startFulfillment(o.id);
+    const unconfirmed = await prisma.order.findMany({
+      where: {
+        status: { notIn: [OrderStatus.PENDING_PAYMENT, OrderStatus.CANCELLED, OrderStatus.FAILED] },
+        providerPaymentId: { not: null },
+        createdAt: { gt: new Date(now.getTime() - 48 * 3600_000) },
+        updatedAt: { lt: cutoff },
+        emails: { none: { kind: 'ORDER_CONFIRMED' } },
+      },
+      select: { id: true },
+      take: 50,
+    });
+    for (const o of unconfirmed) await this.emails.orderEvent('ORDER_CONFIRMED', o.id);
+    return { routed: unrouted.map((o) => o.id), confirmed: unconfirmed.map((o) => o.id) };
   }
 
   async listForStore(storeId: string) {

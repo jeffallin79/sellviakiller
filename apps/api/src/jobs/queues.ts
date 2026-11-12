@@ -57,10 +57,12 @@ export function isRedisUp() {
 
 export async function enqueueRouteFulfillment(orderId: string) {
   if (redisAvailable && routeQueue) {
+    // jobId per order: enqueueing again (markPaid + sweeper) is a no-op while the job exists;
+    // failed jobs are removed so the sweeper can try again later.
     await routeQueue.add(
       'route',
       { orderId },
-      { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+      { jobId: `route-${orderId}`, attempts: 3, backoff: { type: 'exponential', delay: 2000 }, removeOnComplete: 1000, removeOnFail: true },
     );
     return { queued: true };
   }

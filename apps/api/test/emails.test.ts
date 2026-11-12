@@ -64,6 +64,7 @@ async function paidStubOrder(qty = 2) {
   await prisma.store.update({ where: { id: store.id }, data: { name: 'Juniper <Goods>', autoFulfill: false } as any }).catch(() =>
     prisma.store.update({ where: { id: store.id }, data: { name: 'Juniper <Goods>' } }));
   const res: any = await orders.checkout({ ...checkoutInput(store.slug, sp.id, qty), name: 'Ada <script>' } as any);
+  await emails.idle(); // delivery is background since QA round 2 (#1); wait before asserting on it
   return { org, store, orderId: res.order.id as string };
 }
 
@@ -112,6 +113,7 @@ test('trigger: confirmation on paid — exactly once, even if markPaid is replay
   await orders.markPaid(orderId, `stub_payment_${orderId.slice(-8)}`, 'stub');
   await Promise.all([1, 2, 3].map(() => emails.orderEvent('ORDER_CONFIRMED', orderId)));
   assert.deepEqual(await kinds(orderId), ['ORDER_CONFIRMED']);
+  await emails.idle();
   assert.equal(mail.sent.length, 1);
   const m = mail.sent[0];
   assert.equal(m.to, 'buyer@example.com');
@@ -150,6 +152,7 @@ test('trigger: shipped email with tracking number + carrier link, once; then del
   await fulfillment.pollTracking(f.id);
   await fulfillment.pollTracking(f.id);
   assert.deepEqual(await kinds(orderId), ['ORDER_CONFIRMED', 'ORDER_SHIPPED']);
+  await emails.idle();
   const shipped = mail.sent.find((m) => /shipped/i.test(m.subject))!;
   assert.ok(shipped.html.includes(f.trackingNumber!), 'tracking number in email');
   assert.ok(shipped.html.includes(trackingUrl(f.carrier, f.trackingNumber!).replace(/&/g, '&amp;')), 'carrier tracking link');
@@ -182,6 +185,7 @@ test('trigger: partial then full refund — one email each, amounts shown, order
   assert.equal(o.refundedCents, 5000);
   const ks = await kinds(orderId);
   assert.equal(ks.filter((k) => k === 'ORDER_REFUNDED').length, 2);
+  await emails.idle();
   const refundMails = mail.sent.filter((m) => /refund/i.test(m.subject));
   assert.ok(refundMails[0].html.includes('$15.00'));
   assert.ok(refundMails[1].html.includes('$35.00'));

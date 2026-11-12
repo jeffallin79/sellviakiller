@@ -6,6 +6,11 @@ import { enqueueEmailSend } from '../jobs/queues';
 import { DomainsService } from '../domains/domains.service';
 
 export const MAX_EMAIL_ATTEMPTS = 5;
+/** How long one sender holds a message before another may retry it (a crashed sender's lease expires). */
+export const EMAIL_LEASE_MS = 2 * 60_000;
+/** Outbox sweeper backoff: 30s, 1m, 2m, 4m … after each attempt */
+const retryAfterMs = (attempts: number) => 30_000 * 2 ** Math.max(0, attempts - 1);
+
 export const orderNumber = (orderId: string) => orderId.slice(-8).toUpperCase();
 
 /** "Juniper Goods <orders@mail.storeforge.app>" — display name is the shop, address is ours (SPF/DKIM). */
@@ -17,8 +22,10 @@ export function fromHeader(storeName: string) {
 
 /**
  * Customer order emails. Each trigger is written once (EmailMessage.dedupeKey is unique), so
- * webhook replays and repeated tracking polls never send twice. Sending goes through the
- * `email.send` queue (inline when Redis is down). Failures never break the order flow.
+ * webhook replays and repeated tracking polls never send twice. The row is the outbox: callers
+ * only wait for that DB write; delivery runs on the `email.send` queue (or in the background when
+ * Redis is down) and the outbox sweeper picks up anything a crash left QUEUED. A send lease
+ * (lockedUntil) makes sure only one sender delivers a message. Failures never break the order flow.
  */
 @Injectable()
 export class EmailService {
@@ -54,7 +61,7 @@ export class EmailService {
         throw e;
       }
       const q = await enqueueEmailSend(msg.id);
-      if (q.inline) await this.send(msg.id).catch(() => null);
+      if (q.inline) this.sendInBackground(msg.id);
       return { id: msg.id, queued: q.queued };
     } catch (e: any) {
       this.logger.error(`email ${kind} for order ${orderId} not created: ${e?.message ?? e}`);
@@ -62,16 +69,28 @@ export class EmailService {
     }
   }
 
+  private readonly inflight = new Set<Promise<unknown>>();
+  /** Inline mode (no Redis): deliver without making the caller wait. */
+  private sendInBackground(id: string) {
+    const p = this.send(id).catch(() => null).finally(() => this.inflight.delete(p));
+    this.inflight.add(p);
+  }
+  /** Tests / graceful shutdown: wait for background sends started by this process. */
+  async idle() {
+    while (this.inflight.size) await Promise.all([...this.inflight]);
+  }
+
   /** Worker body. Throws on retryable failure so BullMQ backs off and retries. */
   async send(emailId: string): Promise<void> {
     const m = await prisma.emailMessage.findUnique({ where: { id: emailId } });
     if (!m || m.status === EmailStatus.SENT) return;
     const transport = getEmailTransport();
+    const now = new Date();
     const claim = await prisma.emailMessage.updateMany({
-      where: { id: emailId, status: { not: EmailStatus.SENT } },
-      data: { attempts: { increment: 1 }, transport: transport.kind },
+      where: { id: emailId, status: { not: EmailStatus.SENT }, OR: [{ lockedUntil: null }, { lockedUntil: { lt: now } }] },
+      data: { attempts: { increment: 1 }, transport: transport.kind, lockedUntil: new Date(now.getTime() + EMAIL_LEASE_MS) },
     });
-    if (!claim.count) return;
+    if (!claim.count) return; // someone else holds the lease
     try {
       const res = await transport.send({
         id: m.id,
@@ -86,13 +105,13 @@ export class EmailService {
       });
       await prisma.emailMessage.update({
         where: { id: emailId },
-        data: { status: EmailStatus.SENT, sentAt: new Date(), providerMessageId: res.providerMessageId, lastError: null },
+        data: { status: EmailStatus.SENT, sentAt: new Date(), providerMessageId: res.providerMessageId, lastError: null, lockedUntil: null },
       });
     } catch (e: any) {
       const permanent = e instanceof PermanentEmailError || m.attempts + 1 >= MAX_EMAIL_ATTEMPTS;
       await prisma.emailMessage.update({
         where: { id: emailId },
-        data: { status: permanent ? EmailStatus.FAILED : EmailStatus.QUEUED, lastError: String(e?.message ?? e).slice(0, 1000) },
+        data: { status: permanent ? EmailStatus.FAILED : EmailStatus.QUEUED, lastError: String(e?.message ?? e).slice(0, 1000), lockedUntil: null },
       });
       this.logger.warn(`email ${emailId} ${permanent ? 'failed' : 'will retry'}: ${e?.message ?? e}`);
       if (!permanent) throw e;
@@ -109,6 +128,28 @@ export class EmailService {
       if (q.inline) await this.send(id).catch(() => null);
     }
     return this.get(organizationId, id);
+  }
+
+  /**
+   * Outbox sweeper: QUEUED messages nobody is delivering (process died between the outbox write
+   * and the send, Redis job lost, transient failure) go out again, with backoff. Idempotent: the
+   * lease stops two sweepers (or a sweeper and a worker) from sending the same row.
+   */
+  async sweepOutbox(now = new Date()) {
+    const rows = await prisma.emailMessage.findMany({
+      where: {
+        status: EmailStatus.QUEUED,
+        attempts: { lt: MAX_EMAIL_ATTEMPTS },
+        updatedAt: { lt: new Date(now.getTime() - 30_000) },
+        OR: [{ lockedUntil: null }, { lockedUntil: { lt: now } }],
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 50,
+      select: { id: true, attempts: true, updatedAt: true },
+    });
+    const due = rows.filter((r) => r.attempts === 0 || now.getTime() - r.updatedAt.getTime() >= retryAfterMs(r.attempts));
+    for (const r of due) await this.send(r.id).catch(() => null);
+    return due.map((r) => r.id);
   }
 
   async list(organizationId: string, opts: { storeId?: string; orderId?: string; take?: number } = {}) {
