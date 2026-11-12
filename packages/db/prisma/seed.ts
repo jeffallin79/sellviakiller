@@ -16,7 +16,7 @@ const CATEGORIES = [
   'Office',
 ];
 
-/** Bundled art (apps/*/public/catalog, scripts/gen-catalog-art.py): same-origin, no third-party image host. */
+/** Bundled art (apps/{storefront,admin}/public/catalog, scripts/gen-catalog-art.py): same-origin, no third-party image host. */
 const catalogImage = (category: string, i: number) =>
   `/catalog/${category.toLowerCase().replace(/&/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${(Math.floor(i / CATEGORIES.length) % 4) + 1}.svg`;
 
