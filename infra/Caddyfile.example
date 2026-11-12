@@ -1,0 +1,36 @@
+# StoreForge storefront edge with on-demand TLS for merchant custom domains.
+# Merchants CNAME shop.theirbrand.com → stores.<root> (or A → this host's IP for root domains).
+# Caddy asks the API before issuing a certificate, so only DNS-verified domains get one.
+#
+#   DOMAIN_TLS_PROVIDER=caddy
+#   DOMAIN_TLS_ASK_TOKEN=<long random string>       (same value below)
+#   DOMAIN_CNAME_TARGET=stores.example-root.com
+#   DOMAIN_APEX_IPS=<this host's public IPv4>
+#
+# Needs ports 80 + 443 open to the internet (ACME HTTP-01 / TLS-ALPN-01).
+{
+	email ops@example-root.com
+	on_demand_tls {
+		ask http://api:4000/api/domains/tls-ask?token={$DOMAIN_TLS_ASK_TOKEN}
+	}
+}
+
+# Platform subdomains: wildcard cert needs DNS-01; on-demand works too if you prefer.
+*.example-root.com, example-root.com {
+	tls {
+		on_demand
+	}
+	reverse_proxy storefront:3000 {
+		header_up X-Forwarded-Host {host}
+	}
+}
+
+# Any other host = a merchant custom domain.
+https:// {
+	tls {
+		on_demand
+	}
+	reverse_proxy storefront:3000 {
+		header_up X-Forwarded-Host {host}
+	}
+}

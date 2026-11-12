@@ -57,8 +57,10 @@ Path fallback works without hosts: `http://localhost:3000/s/demo`.
 4. **Shelf** → tick products → **Add to store** (cost, your price at +50%, what you keep, real ETA)
 5. Storefront http://localhost:3000/s/demo → add to bag → checkout (stub marks PAID, no card)
 6. **Dispatch** → **Send to supplier** → CJ stub returns tracking → SHIPPED
-7. **Ad Fuel** shows the wallet (top-up/refund are API-only for now)
-8. Export CSV: Shelf/Dispatch **Export CSV** (`/api/export/products.csv`, `/api/export/orders.csv`)
+7. **Emails** → the confirmation and shipped (with tracking) emails, as the customer sees them (dev outbox)
+8. **Dispatch** → **Refund** (partial or full) → refund email · **Domains** → add `shop.example.com` → **Simulate DNS (dev)** → live in ~20 s
+9. **Ad Fuel** shows the wallet (top-up/refund are API-only for now)
+10. Export CSV: Shelf/Dispatch **Export CSV** (`/api/export/products.csv`, `/api/export/orders.csv`)
 
 Soft-delete stores from Stores page — **never hard-deletes** on cancel.
 
@@ -70,6 +72,8 @@ Soft-delete stores from Stores page — **never hard-deletes** on cancel.
 | `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_CONNECT_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER/GROWTH/SCALE` | Stripe Billing, Connect checkout, Ad Fuel, webhooks | **Stub mode** — local ACTIVE sub, instant payout account, instant PAID checkout, instant fuel credit |
 | `CJ_API_KEY` (+ email/password) | Live CJ catalog sync / fulfill | **Fixtures** via `pnpm db:seed` (`USE_CATALOG_FIXTURES=true`). Spocket/Zendrop stay stubs. |
 | `BETTER_AUTH_SECRET` | Auth cookies | Dev default (change before deploy) |
+| `RESEND_API_KEY`, `EMAIL_FROM_ADDRESS` (verified sending domain) | Delivering order emails | **Dev outbox** — rendered + saved to `.outbox/`, readable in admin → Emails |
+| `DOMAIN_DNS_MODE=live`, `DOMAIN_TLS_PROVIDER=caddy\|vercel` (+ `DOMAIN_TLS_ASK_TOKEN` or `DOMAIN_PROVIDER_TOKEN`/`VERCEL_PROJECT_ID`), `DOMAIN_CNAME_TARGET`, `DOMAIN_APEX_IPS` | Real custom domains | **Stub** — no DNS lookups, simulated certificate; "Simulate DNS" in admin |
 
 Set `USE_CATALOG_FIXTURES=false` and `CJ_API_KEY=…` when Jeff provides CJ credentials.
 
@@ -164,6 +168,24 @@ The second migration renames the Phase 0 payment columns to provider-neutral one
 - Fonts (OFL 1.1) and icons (MIT): see `NOTICE` and `licenses/`.
 
 
+
+## Phase 1 · Slice 2 — custom domains & order emails
+
+**Domains** (`Domain(storeId, host, status, verifiedAt, …)`, admin → Domains, API `/api/domains`):
+
+- Merchant adds a host → two records: `TXT _storeforge.<host> = storeforge-verify=<token>` (ownership) and `CNAME <host> → DOMAIN_CNAME_TARGET` (root domains: `A → DOMAIN_APEX_IPS`, or ALIAS/flattening to the target).
+- States `PENDING_DNS → ISSUING_TLS → ACTIVE`, or `FAILED` (no DNS within 72 h, CA error, or no cert within 30 min; **Check again** restarts). An in-process sweeper (`DOMAIN_SWEEP_MS`, compare-and-set claim so several API instances are safe) checks every 30 s for the first 10 min, then 2 min, then 15 min; certificates are polled every 15 s; ACTIVE domains are re-checked every 12 h and warn (never flap offline) if DNS drifts.
+- TLS providers: `stub` (simulated, issues after `DOMAIN_STUB_TLS_DELAY_MS`), `caddy` (on-demand TLS gated by `GET /api/domains/tls-ask`, see `infra/Caddyfile.example`), `vercel` (Vercel Domains API).
+- Routing: the storefront middleware asks `GET /api/storefront/resolve-host` (cached 60 s, misses 15 s) and rewrites to the shop; `/s/<slug>` on a custom host 308s to the clean URL, the platform subdomain and secondary/www-twin hosts 308 to the primary domain, unknown hosts get a branded 404. Checkout return URLs and email links use the primary domain.
+- Up to 3 domains per store; a host can belong to one store only.
+
+**Order emails** (`EmailMessage`, queue `email.send`, admin → Emails):
+
+- Triggers: **confirmation** when an order becomes PAID (stub, Checkout webhook or async payment — once, whatever replays), **shipped** with carrier, tracking number and carrier link when tracking first appears, **delivered**, and **refund** (each partial refund gets its own email). Each trigger has a unique `dedupeKey`, so webhook replays and repeated tracking polls never double-send.
+- Sending: Resend REST API with `Idempotency-Key: sf-email-<id>` when `RESEND_API_KEY` is set, otherwise the dev outbox. Up to 5 attempts with backoff; 4xx from Resend is permanent. Failures never block the order. Merchants can **Send again**.
+- Brand: the templates inline the Garnet & Saffron hexes, read at runtime from `packages/ui/tokens.css` (tests enforce that every colour in an email is a token). From = `"<Shop name>" <EMAIL_FROM_ADDRESS>`, Reply-To = shop owner.
+
+**Merchant refunds** (`OrderRefund`, `POST /api/orders/:id/refunds {amountCents?, reason?, requestId}`, Dispatch → Refund): amount is reserved atomically (never over-refunds under concurrency), `requestId` makes retries idempotent, Stripe refunds use `reverse_transfer` + `refund_application_fee` and an idempotency key, outcome-unknown errors are found again by metadata, and `refund.*` webhooks settle pending refunds (failure releases the amount; a refund that fails after succeeding flags the order). Fully refunded orders become `REFUNDED` and can't be sent to the supplier.
 
 ## Dependency audit (`pnpm audit --prod`)
 

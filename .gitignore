@@ -13,3 +13,4 @@ data/
 .local-bin/
 .env
 *.tsbuildinfo
+.outbox/
