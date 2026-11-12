@@ -309,9 +309,9 @@ export class CartsService {
   }
 
   async updateSettings(organizationId: string, storeId: string, body: { enabled?: boolean; mailingAddress?: string | null }) {
-    await this.ownStore(organizationId, storeId);
+    const current = await this.ownStore(organizationId, storeId);
     const addr = body.mailingAddress === undefined ? undefined : body.mailingAddress?.replace(/[\r\n]+/g, ', ').replace(/\s{2,}/g, ' ').trim().slice(0, 300) || null;
-    if (body.enabled && addr === null) throw new BadRequestException('A mailing address is required to send reminders');
+    if (body.enabled && (addr === null || (addr === undefined && !current.mailingAddress))) throw new BadRequestException('A mailing address is required to send reminders');
     const s = await prisma.store.update({
       where: { id: storeId },
       data: { ...(body.enabled !== undefined ? { cartRecovery: body.enabled } : {}), ...(addr !== undefined ? { mailingAddress: addr } : {}) },

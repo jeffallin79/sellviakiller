@@ -246,6 +246,66 @@ ok(ref.status < 300 && ref.json.status === 'succeeded', 'ad fuel refund $5 (stub
     }
   }
 }
+// ---- slice 5: research scores + abandoned-bag recovery ----
+{
+  const sleep5 = (ms) => new Promise((r) => setTimeout(r, ms));
+  const rr = await call('POST', '/research/refresh');
+  ok(rr.status < 300, `research refresh (${rr.json.throttled ? 'throttled' : `${rr.json.scored} scored`})`);
+  const rl = (await call('GET', '/research/products?take=5&sort=score')).json;
+  ok(rl.items?.length > 0 && rl.items.every((x) => x.score >= 0 && x.score <= 100), `research list: ${rl.items?.length} scored, sources ${rl.sources?.trends}/${rl.sources?.adLibrary}/${rl.sources?.llm}`);
+  const rd = (await call('GET', `/research/products/${rl.items[0].productId}`)).json;
+  ok(rd.score?.angles?.length > 0 && rd.score.angles.every((a) => a.policy !== 'block'), `research detail: ${rd.score?.angles?.length} angle drafts, none policy-blocked`);
+  const mc = await call('POST', '/research/margin', { priceCents: 4000, costCents: 1200 });
+  ok(mc.status < 300 && Number.isFinite(mc.json.profitCents), `margin calc: $40 at $12 cost → ${(mc.json.profitCents / 100).toFixed(2)} profit`);
+
+  ok((await call('PATCH', `/stores/${storeId}/cart-recovery`, { enabled: true })).status === 400, 'reminders cannot be enabled without a mailing address');
+  const set = await call('PATCH', `/stores/${storeId}/cart-recovery`, { enabled: true, mailingAddress: '1 Smoke St, Regina SK S4P 0A1, Canada' });
+  ok(set.json.settings?.ready === true, 'reminders on with a mailing address');
+  const token = `e2e${Date.now().toString(36)}abcdefghijkl`;
+  const shopper = `bag${Date.now()}@example.com`;
+  const lines = [{ storeProductId: sp.json[0].id, quantity: 2 }];
+  const noConsent = await call('POST', '/storefront/carts', { storeSlug: slug, token: token + 'n', email: shopper, consent: false, lines });
+  ok(noConsent.json.stored === false, 'no opt-in → nothing stored');
+  const cap = await call('POST', '/storefront/carts', { storeSlug: slug, token, email: shopper, name: 'Bag Tester', consent: true, lines });
+  ok(cap.json.stored === true && cap.json.id, 'opt-in bag captured');
+  const again = await call('POST', '/storefront/carts', { storeSlug: slug, token, email: shopper, consent: true, lines });
+  ok(again.json.id === cap.json.id, 'same token updates the same bag');
+  // Make the bag look 2 h old so the sweeper (CART_SWEEP_MS) picks it up. Needs local psql.
+  const { execFileSync } = await import('node:child_process');
+  let aged = false;
+  try {
+    execFileSync('psql', [process.env.E2E_DATABASE_URL ?? 'postgresql://storeforge@127.0.0.1:5432/storeforge', '-qc', `UPDATE "Cart" SET "lastActivityAt" = now() - interval '2 hours' WHERE id = '${cap.json.id.replace(/[^a-z0-9]/gi, '')}'`], { stdio: 'pipe' });
+    aged = true;
+  } catch { console.log('skip - psql unavailable, reminder delivery not checked'); }
+  if (aged) {
+    let mail;
+    for (let i = 0; i < 100 && mail?.status !== 'SENT'; i++) {
+      mail = (await call('GET', `/emails?storeId=${storeId}`)).json.items.find((m) => m.kind === 'CART_REMINDER_1');
+      if (mail?.status !== 'SENT') await sleep5(1000);
+    }
+    ok(mail?.status === 'SENT', `reminder 1 sent by the sweeper (${mail?.status ?? 'not queued'}; start the API with CART_SWEEP_MS≈3000)`);
+    const html = String((await call('GET', `/emails/${mail.id}/html`)).json);
+    ok(html.includes('1 Smoke St') && /Unsubscribe/.test(html), 'reminder has the postal address and an unsubscribe link');
+    const unsub = html.match(/href="([^"]*\/api\/email\/unsubscribe\?[^"]+)"/)?.[1]?.replace(/&amp;/g, '&');
+    const rec = html.match(/href="([^"]*[?&]recover=[^"]+)"/)?.[1]?.replace(/&amp;/g, '&');
+    const ru = new URL(rec);
+    const restored = await call('GET', `/storefront/carts/recover?id=${ru.searchParams.get('recover')}&t=${ru.searchParams.get('t')}`);
+    ok(restored.status === 200 && restored.json.lines?.[0]?.quantity === 2, 'recover link restores the bag');
+    ok((await call('GET', `/storefront/carts/recover?id=${ru.searchParams.get('recover')}&t=bad${ru.searchParams.get('t').slice(3)}`)).status >= 400, 'tampered recover link rejected');
+    const uu = new URL(unsub);
+    const path = uu.pathname.replace(/^\/api/, '') + uu.search;
+    const pageGet = await fetch(API + path);
+    ok(pageGet.status === 200 && /Unsubscribe<\/button>/.test(await pageGet.text()), 'unsubscribe GET shows a button, does not unsubscribe');
+    ok((await call('GET', `/stores/${storeId}/cart-recovery`)).json.stats.unsubscribed === 0, 'still subscribed after GET');
+    const one = await fetch(API + path, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'List-Unsubscribe=One-Click' });
+    ok(one.status === 200, 'RFC 8058 one-click unsubscribe');
+    ok((await fetch(API + path, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'List-Unsubscribe=One-Click' })).status === 200, 'one-click unsubscribe is idempotent');
+    const ov = (await call('GET', `/stores/${storeId}/cart-recovery`)).json;
+    ok(ov.stats.unsubscribed === 1 && ov.carts.find((c) => c.id === cap.json.id)?.status === 'OPTED_OUT', 'bag opted out, address suppressed');
+    const blocked = await call('POST', '/storefront/carts', { storeSlug: slug, token: token + 'z', email: shopper, consent: true, lines });
+    ok(blocked.json.stored === false && blocked.json.reason === 'unsubscribed', 'unsubscribed address is not captured again');
+  }
+}
 const csv = await call('GET', '/export/orders.csv');
 ok(csv.status === 200 && String(csv.json).includes(order.id), 'orders CSV export');
 // ---- QA round 2 #3: storefront ignores X-Forwarded-Host from an untrusted peer ----

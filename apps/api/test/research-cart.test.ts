@@ -252,6 +252,7 @@ test('reminder email: honest copy, one-click unsubscribe headers, postal address
   assert.ok(!r.reminders.some((x) => x.cartId === a.cart.id || x.cartId === b.cart.id));
   assert.equal(await prisma.emailMessage.count({ where: { cartId: { in: [a.cart.id, b.cart.id] } } }), 0);
   await assert.rejects(carts.updateSettings(noAddr.org.id, noAddr.store.id, { enabled: true, mailingAddress: '' }), /mailing address is required/);
+  await assert.rejects(carts.updateSettings(noAddr.org.id, noAddr.store.id, { enabled: true }), /mailing address is required/);
   const ov = await carts.updateSettings(noAddr.org.id, noAddr.store.id, { enabled: true, mailingAddress: '1 Main St\r\nRegina SK' });
   assert.equal(ov.settings.mailingAddress, '1 Main St, Regina SK', 'single line, no header/CRLF tricks');
   assert.equal(ov.settings.ready, true);
